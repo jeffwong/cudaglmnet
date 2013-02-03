@@ -1,2 +1,2 @@
-src/main.o
-src/GPULassoPath.so
+src/*.o
+src/*.so
