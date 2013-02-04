@@ -1,2 +1,2 @@
-export(activeGPULassoPath)
+export(cudaLassoPath)
 useDynLib(GPULassoPath)
