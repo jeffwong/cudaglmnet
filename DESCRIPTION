@@ -8,6 +8,12 @@ Description: CUDA acceleration to compute the lasso
 Suggests:
     testthat,
     roxygen2
+Depends:
+    Rcpp,
+    RcppEigen
+LinkingTo: Rcpp, RcppEigen
 Collate:
     'RGPULasso-package.r'
     'GPULassoPath.R'
+    'RcppExports.R'
+    'RcppLassoPath.R'

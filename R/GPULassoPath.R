@@ -10,7 +10,6 @@
 #' @param step_size step size for gradient descent
 #' @param threshold convergence threshold
 #' @param maxit maximum iterations
-#' @useDynLib GPULassoPath
 #' @export
 cudaLassoPath <- function(X, y, B = matrix(0, ncol(X), length(lambda)),
                           lambda, standardize.x = T, standardize.y = T,
