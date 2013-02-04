@@ -3,27 +3,45 @@
 #' Entry point to CUDA implementation of lasso
 #' @param X design matrix X
 #' @param y response vector y
-#' @param beta initial value for beta matrix for varying lambda penalty
-#' @param maxIt maximum iterations
-#' @param thresh convergence threshold
-#' @param step_size step size for gradient descent
+#' @param B initial value for beta matrix for varying lambda penalty
 #' @param lambda l1 penalties
-#' @param GPU if true, run on GPU using CUDA
+#' @param standardize.x logical.  If true standardize the design matrix
+#' @param standardize.y logical.  If true standardize the response vector
+#' @param step_size step size for gradient descent
+#' @param threshold convergence threshold
+#' @param maxit maximum iterations
 #' @useDynLib GPULassoPath
 #' @export
-activeGPULassoPath <- function(X, y, beta = matrix(0,ncol = length(lambda), nrow = ncol(X)),
-                               maxIt = 1e3, thresh = 1e-6, step_size= 0.1, lambda = 1,
-                               GPU = TRUE) {
+cudaLassoPath <- function(X, y, B = matrix(0, ncol(X), length(lambda)),
+                          lambda, standardize.x = T, standardize.y = T,
+                          step_size= 0.1, threshold = 1e-6,
+                          maxit = 1e3) {
   
   n <- nrow(X)
   p <- ncol(X)
 
-  if (GPU) {
-    fit <- .C("activePathSol", X = as.single(X), y = as.single(y), n = as.integer(n),
-              p = as.integer(p), maxIt = as.integer(maxIt), thresh = as.single(thresh),
-              step_size= as.single(step_size), lambda = as.single(lambda),
-              beta = as.single(beta), num_lambda = as.integer(length(lambda)))
-  }
+  if (standardize.x) {
+    X = scale(X, center=F)
+    X.sd = attr(X, "scaled:scale")
+  } else X.sd = rep(1, ncol(X))
+
+  if (standardize.y) {
+    y = scale(y, center=F)
+    y.sd = attr(y, "scaled:scale")
+  } else y.sd = 1
+
+  intercept = mean(y)
+  y = y - intercept
+
+  fit <- .C("activePathSol", X = as.single(X), y = as.single(y), n = as.integer(n),
+            p = as.integer(p), maxIt = as.integer(maxit), thresh = as.single(threshold),
+            step_size= as.single(step_size), lambda = as.single(lambda),
+            beta = as.single(B), num_lambda = as.integer(length(lambda)))
   fit$beta <- matrix(fit$beta, nrow = p, byrow = F)
+
+  #scale back
+  fit$beta = diag(X.sd) %*% fit$beta
+  fit$beta = rbind(intercept * y.sd, fit$beta)
+
   return (fit)
 }
