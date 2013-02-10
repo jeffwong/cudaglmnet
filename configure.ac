@@ -1,9 +1,21 @@
-AC_INIT([RGPULasso],1.0)
+AC_INIT([RGPULasso], 0.01)
 AC_CONFIG_AUX_DIR([tools])
+
+AC_MSG_NOTICE([checking for critical tools used by configure])
+
+AC_ARG_WITH([compiler-bindir],
+	AC_HELP_STRING([--with-compiler-bindir=compiler_bindir],
+		[specify the directory containing gcc, e.g. /usr/bin]),
+	[COMPILER_BINDIR="$withval"])
 
 AC_ARG_WITH([cuda-home],
 	AC_HELP_STRING([--with-cuda-home=cuda_home],
 		[specify the root of your cuda install, e.g. /usr/local/cuda]),
+	[CUDA_HOME="$withval"])
+
+AC_ARG_WITH([cula-home],
+	AC_HELP_STRING([--with-cula-home=cula_home],
+		[specify the root of your cula install, e.g. /usr/local/cula]),
 	[CUDA_HOME="$withval"])
 
 AC_ARG_WITH([r-include],
@@ -16,24 +28,20 @@ AC_ARG_WITH([r-lib],
 		[specify the full path to your R shared libraries, e.g. /usr/lib64/R/lib]),
 	[R_LIB="$withval"])
 
-AC_ARG_WITH([rcpp-home],
-	AC_HELP_STRING([--with-rcpp-home=rcpp-home],
-		[specify the full path of the Rcpp package directory, can get from evaluating "Rcpp:::RcppLdPath()" in R]),
-	[RCPP_HOME="$withval"])
-
-
-withdebug=""
-AC_ARG_ENABLE([debug],
-	AC_HELP_STRING([--enable-debug],
-		[debug the library]),
-	[withdebug=$enableval])
-
-
-device_emu=""
-AC_ARG_ENABLE([emulation],
-	AC_HELP_STRING([--enable-emulation],
-		[emulate the gpu because maybe you do not have one]),
-	[device_emu=$enableval])
+AC_MSG_CHECKING("environment variable COMPILER_BINDIR")
+if test -z "${COMPILER_BINDIR}"; then
+	AC_MSG_RESULT("COMPILER_BINDIR not set; using user's default path")
+else
+	AC_MSG_RESULT("using COMPILER_BINDIR=${COMPILER_BINDIR}")
+	AC_CHECK_FILE([${COMPILER_BINDIR}/gcc], [HAS_GCC="yes"])
+	if test -z "${HAS_GCC}"; then
+		AC_MSG_ERROR("cannot find gcc; check that ${COMPILER_BINDIR} is the correct location; using user's default path")
+		MISC_PARAMS=""
+	else
+		AC_MSG_RESULT("gcc found in ${COMPILER_BINDIR}")
+		MISC_PARAMS="--compiler-bindir ${COMPILER_BINDIR}"
+	fi
+fi
 
 AC_MSG_CHECKING("environment variable CUDA_HOME")
 if test -z "${CUDA_HOME}"; then
@@ -41,6 +49,14 @@ if test -z "${CUDA_HOME}"; then
 	CUDA_HOME="/usr/local/cuda"
 else
 	AC_MSG_RESULT("using CUDA_HOME=${CUDA_HOME}")
+fi
+
+AC_MSG_CHECKING("environment variable CULA_HOME")
+if test -z "${CULA_HOME}"; then
+	AC_MSG_RESULT("CULA_HOME not set; using default /usr/local/cula")
+	CULA_HOME="/usr/local/cula"
+else
+	AC_MSG_RESULT("using CULA_HOME=${CULA_HOME}")
 fi
 
 AC_CHECK_FILE([${CUDA_HOME}/bin/nvcc], [HAS_NVCC="yes"])
@@ -64,6 +80,7 @@ fi
 if test -z "${R_HOME}"; then
 	AC_MSG_ERROR("could not determine R_HOME")
 else
+	CPICFLAGS=`"${R_HOME}/bin/R" CMD config CPICFLAGS`
 	if test -z "${R_INCLUDE}"; then
 		R_INCLUDE=`"${R_HOME}/bin/R" CMD config --cppflags`
 	else
@@ -74,48 +91,89 @@ else
 	else
 		R_LIB="-L${R_LIB} -lR"
 	fi
-	if test -z "${RCCP_HOME}"; then
-		RCPP_HOME=`${R_HOME}/bin/Rscript -e "cat(tools::file_path_as_absolute(base::system.file(package='Rcpp')))"`
-		RCPP_LD_PATH=`${R_HOME}/bin/Rscript -e "cat(Rcpp:::RcppLdPath())"`
-	fi
-	RCPP_LIB="-L${RCPP_HOME} -lRcpp"
 	AC_MSG_RESULT("using ${R_INCLUDE} for R header files")
 	AC_MSG_RESULT("using ${R_LIB} for R shared libraries")
-	AC_MSG_RESULT("using ${RCPP_LIB} for RCpp")
 fi
 
-if test "${device_emu}" = yes ; then
-	EMULATION="-deviceemu"
+AC_MSG_CHECKING("whether this is the 64 bit version of CULA")
+AC_CHECK_FILE([${CULA_HOME}/lib64/libcula.so], [CULA64BIT="yes"])
+AC_CHECK_FILE([${CULA_HOME}/lib64/libcula.dylib], [CULA64BIT="yes"])
+if test -z "${CULA64BIT}"; then
+	AC_MSG_RESULT("no")
+	AC_MSG_CHECKING("checking whether cula is present at all")
+	AC_CHECK_FILE([${CULA_HOME}/lib/libcula.so], [HAS_CULA="yes"])
+	AC_CHECK_FILE([${CULA_HOME}/lib/libcula.dylib], [HAS_CULA="yes"])
+	if test -z "${HAS_CULA}"; then
+		AC_MSG_RESULT("cula is not installed")
+		HAS_CULA="no"
+		CULA_OBJS=""
+		LIBS="-L${CUDA_HOME}${CUDA_LIB_DIR} -lcublas"
+	else
+		AC_MSG_RESULT("yes -- using ${CULA_HOME}/lib for CULA libs")
+		CULA_LIB_DIR="/lib"
+		CULA_OBJS=""
+		LIBS="-L${CULA_HOME}${CULA_LIB_DIR} -lcula -lcublas"
+	fi
 else
-	EMULATION=""
+	AC_MSG_RESULT("yes -- using ${CULA_HOME}/lib64 for CULA libs")
+	HAS_CULA="yes"
+	CULA_LIB_DIR="/lib64"
+	CULA_OBJS=""
+	BLAS_LIBS=`"${R_HOME}/bin/R" CMD config BLAS_LIBS`
+	LIBS="-L${CULA_HOME}${CULA_LIB_DIR} -lcula -lcublas"
 fi
 
-if test "${withdebug}" = yes ; then
-	CUDA_DEBUG="-g -G"
-	CPP_DEBUG="-g"
-else
-	CUDA_DEBUG=""
-	CPP_DEBUG=""
-fi
+DEVICEOPTS=""
 
+AC_MSG_NOTICE([determining host platform])
+arch=`uname -m`
+osrelease=`uname -r`
+osversion=`uname -v`
+
+RPATHFLAG=""
+AC_CANONICAL_HOST
+case "${host_os}" in
+	*darwin*)
+		if test -z "${CULA_LIB_DIR}"; then
+			RPATHFLAG="-rpath,${CUDA_HOME}${CUDA_LIB_DIR}"
+		else
+			RPATHFLAG="-rpath,${CULA_HOME}${CULA_LIB_DIR}"
+		fi
+		RPATHFLAG="${RPATHFLAG},'${R_LIB}'"
+		R_LIB=""
+		AC_PATH_PROG([SW_VERS],[sw_vers],[no],[$PATH])
+		if test "$arch" = "i386"; then
+			$SW_VERS -productVersion | grep '^10.6' > /dev/null 2>&1
+			if test "x$?" = "x0" ; then
+				DEVICEOPTS="-m64"
+			fi
+		elif test "$arch" = "x86_64"; then
+			DEVICEOPTS="-m64"
+		else
+			AC_MSG_WARN([Unrecognised Darwin Architecture])
+		fi
+	;;
+esac
+
+AC_SUBST(LIBS)
+AC_SUBST(MISC_PARAMS)
 AC_SUBST(CUDA_HOME)
-AC_SUBST(CUDA_LIB_DIR)
-AC_SUBST(EMULATION)
-AC_SUBST(CUDA_DEBUG)
-AC_SUBST(CPP_DEBUG)
+
+AC_SUBST(HAS_CULA)
+AC_SUBST(CULA_HOME)
+AC_SUBST(CULA_OBJS)
 
 AC_SUBST(R_INCLUDE)
 AC_SUBST(R_LIB)
-AC_SUBST(RCPP_LIB)
-AC_SUBST(RCPP_HOME)
-AC_SUBST(RCPP_LD_PATH)
 
-
+AC_SUBST(CPICFLAGS)
 AC_SUBST(DEVICEOPTS)
+#AC_SUBST(OBJS13)
+#AC_SUBST(SVMDISABLED)
+AC_SUBST(RPATHFLAG)
 
 AC_CONFIG_FILES([src/Makefile])
+#AC_CONFIG_FILES([R/gpuSvm.R])
+#AC_CONFIG_FILES([R/gpuFastICA.R])
+#AC_CONFIG_FILES([R/gpuSvd.R])
 AC_OUTPUT
-
-
-
-
