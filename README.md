@@ -1,18 +1,12 @@
 cuLasso
 =======
 
-This package requires [NVIDIA's nvcc](https://developer.nvidia.com/cuda-downloads) to run
+This package requires [NVIDIA's nvcc](https://developer.nvidia.com/cuda-downloads) > 4.0 to run
 
 #Installation
 
-1. Install using [devtools](https://github.com/hadley/devtools)
-
-`install.packages('devtools')`
-
-2. Clone this repo and cd into the root directory
-3. load this package using
+If CUDA > 4.0 is installed, then this package can not be installed as a normal source package
 
 ```
-require(devtools)
-load_all()
+install.packages("path to source package", repos = NULL, type = "source")
 ```
