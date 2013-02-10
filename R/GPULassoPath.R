@@ -36,7 +36,7 @@ cudaLassoPath <- function(X, y, B = matrix(0, ncol(X), length(lambda)),
   fit <- .C("activePathSol", X = as.single(X), y = as.single(y), n = as.integer(n),
             p = as.integer(p), maxIt = as.integer(maxit), thresh = as.single(threshold),
             step_size= as.single(step_size), lambda = as.single(lambda),
-            beta = as.single(B), num_lambda = as.integer(length(lambda)))
+            beta = as.single(B), num_lambda = as.integer(length(lambda)), package = "RGPULasso")
   fit$beta <- matrix(fit$beta, nrow = p, byrow = F)
 
   #scale back
