@@ -4,3 +4,4 @@ config.status
 config.log
 configure
 autom4te.cache/*
+src/Makefile
