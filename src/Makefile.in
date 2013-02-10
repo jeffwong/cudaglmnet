@@ -21,16 +21,16 @@ NVCC := @CUDA_HOME@/bin/nvcc -gencode arch=compute_10,code=sm_10 -gencode arch=c
 all: $(TARGETS) 
 
 $(TARGETS): $(OBJS13) $(CULA_OBJS) $(OBJS)
-	$(NVCC) -shared $(LD_PARAMS) $(LIBS) $(OBJS13) $(CULA_OBJS) $(OBJS) -o $@
+	$(NVCC) -O3 -shared $(LD_PARAMS) $(LIBS) $(OBJS13) $(CULA_OBJS) $(OBJS) -o $@
 
 $(OBJS): %.o: %.$(EXT)
-	$(NVCC) -c $(INCS) $(PARAMS) $^ -o $@
+	$(NVCC) -O3 -c $(INCS) $(PARAMS) $^ -o $@
 
 $(OBJS13): %.o: %.$(EXT)
-	$(NVCC) -c $(INCS) $(PARAMS) $^ -o $@
+	$(NVCC) -O3 -c $(INCS) $(PARAMS) $^ -o $@
 
 $(CULA_OBJS): %.o: %.c
-	$(NVCC) -c $(INCS) $(CULA_INCS) $(PARAMS) $^ -o $@
+	$(NVCC) -O3 -c $(INCS) $(CULA_INCS) $(PARAMS) $^ -o $@
 
 clean:
 	rm -rf *.o; rm -rf *.so
