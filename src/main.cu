@@ -185,13 +185,18 @@ extern "C"{
     oldLL = cublasSnrm2(n[0], gpu_resid, 1);
   
     /* Calculating new grad */
-    cublasSgemv('t', n[0], p[0], 1, gpu_X, n[0], gpu_resid, 1, 0, gpu_grad, 1);
+    //cublasSgemv('t', n[0], p[0], 1, gpu_X, n[0], gpu_resid, 1, 0, gpu_grad, 1);
 
-     /* Step beta in the proper direction
-        Computes step_size (gpu_grad) and stores in gpu_beta 
-     */
-    cublasSaxpy(p[0], step_size[0], gpu_grad, 1, gpu_beta, 1);
+    /* Step beta in the proper direction
+       Computes step_size (gpu_grad) and stores in gpu_beta 
+    */
+    //cublasSaxpy(p[0], step_size[0], gpu_grad, 1, gpu_beta, 1);
 
+    /*
+      Compute gpu_beta = gpu_beta + step_size * X^T (residuals)
+    */
+    cublasSgemv('t', n[0], p[0], step_size[0], gpu_X, n[0], gpu_resid, 1, 1, gpu_beta, 1);
+    
     /* Soft-threshholding beta by lambda */
     
     softThreshold(gpu_beta, lambda, step_size[0], p[0]);
