@@ -37,11 +37,27 @@ cudaLassoPath <- function(X, y, B = matrix(0, ncol(X), length(lambda)),
             p = as.integer(p), maxIt = as.integer(maxit), thresh = as.single(threshold),
             step_size= as.single(step_size), lambda = as.single(lambda),
             beta = as.single(B), num_lambda = as.integer(length(lambda)), package = "RGPULasso")
-  fit$beta <- matrix(fit$beta, nrow = p, byrow = F)
+  fit$X.sd = X.sd
+  fit$intercept = intercept
+  fit$y.sd = y.sd
+  structure(fit, class="RGPULasso.cudalasso")
+
+}
+
+#' Lasso Coefficients
+#'
+#' @param cudalasso fit from cudaLassoPath
+#' @param ... other params, not used
+#' @method coef RGPULasso.cudalasso
+#' @S3method coef RGPULasso.cudalasso
+coef.RGPULasso.cudalasso = function(cudalasso, ...) {
+  n = cudalasso$n
+  p = cudalasso$p
+  b = matrix(cudalasso$beta, n, p)
 
   #scale back
   fit$beta = diag(X.sd) %*% fit$beta
   fit$beta = rbind(intercept * y.sd, fit$beta)
-
-  return (fit)
 }
+
+setClass("RGPULasso.cudalasso", representation = "list", S3methods = T)
