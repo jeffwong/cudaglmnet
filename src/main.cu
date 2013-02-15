@@ -10,10 +10,16 @@ Copies parts of matrix gpu_X into sub_X
 __global__ void copySubmatrix(float *gpu_X, float *sub_X, int *gpu_indices,
                               int length_ind, int n, int p)
 {
-  int k = threadIdx.x + blockDim.x*blockIdx.x;
-  if (k < n*length_ind) {
-    int j = (k - 1) / n;
-    int i = k - n * j;    
+  //int k = threadIdx.x;
+  int K = threadIdx.x + blockDim.x*blockIdx.x;
+  //__shared__ float gpu_indices_shared[blockDim.x];
+
+  if (K < n*length_ind) {
+    int j = (K - 1) / n;
+    int i = K - n * j;    
+    //gpu_indices_shared[k] = gpu_indices[j];
+    //__syncthreads();
+    //sub_X[j * n + i] = gpu_X[gpu_indices_shared[k] * n + i];
     sub_X[j * n + i] = gpu_X[gpu_indices[j] * n + i];
   }
 }
@@ -56,15 +62,6 @@ __global__ void checkKKT(float *gpu_grad, int *gpu_isActive, float lambda, int p
   }
 }
 
-//Extract ind-th element of gpu_vector
-//This probably should not be a kernel itself
-__global__ void getKernel (float *gpu_vector, int ind, float *gpu_val)
-
-{
-  gpu_val[0] = gpu_vector[ind];
-}
-
-//Probably should not be a kernel itself
 __global__ void softKernel(float *gpu_beta, float lambda, int p)
   
 {
@@ -112,15 +109,12 @@ extern "C"{
 
   //transfers gpu_vector[ind] into returnPtr
   void getIndVal(float *gpu_vector, int ind, float *returnPtr){
-    int block_size = 1;
-    int n_blocks = 1;
-    float *gpu_val;
-    cudaMalloc((void**) &gpu_val, sizeof(float));
-    getKernel <<< block_size, n_blocks >>> (gpu_vector, ind, gpu_val);
-    cudaMemcpy(returnPtr, gpu_val, sizeof(float), cudaMemcpyDeviceToHost);
-    cudaFree(gpu_val);
+    cudaMemcpy(returnPtr, gpu_vector + ind * sizeof(float), sizeof(float), cudaMemcpyDeviceToHost);
   }
 
+/*
+gpu_grad is passed in, but it is actually immediately reset to be X * (residuals)
+*/
   void checkStep(float *gpu_X, float *gpu_resid, float *gpu_grad, int* gpu_indices,
                  int* indices, float lambda, int *cont, int *gpu_isActive, int *isActive,
                  int *numActive, int *gpu_numActive, int *n, int *p){
@@ -158,7 +152,7 @@ extern "C"{
   void gradStep(float *gpu_X, float *gpu_y, float *gpu_resid, float *gpu_fit,
                 float *gpu_beta, float *gpu_oldBeta, float *gpu_grad, float *gpu_diff,
                 float lambda, float *thresh, int *maxIt, float *step_size, float *beta,
-                int *n, int *p, float *diff, float *step){
+                int *n, int *p, float *diff, float *step) {
  
     float oldLL = 0;
     float newLL = 0;
@@ -180,7 +174,7 @@ extern "C"{
     cublasScopy(n[0], gpu_y, 1, gpu_resid, 1);  // Copying y to resid
     cublasSaxpy(n[0], -1, gpu_fit, 1, gpu_resid, 1);  // Subtracting fit from y (which is stored in resid)
 
-     /* Calculating oldLL based on resid */
+    /* Calculating oldLL based on resid */
 
     oldLL = cublasSnrm2(n[0], gpu_resid, 1);
   
@@ -277,7 +271,6 @@ extern "C"{
         if (count > maxIt[0] || step < thresh[0]) inner_cont = 0; break;
       }
     
-
       unsubBeta(gpu_beta, gpu_Abeta, gpu_indices, numActive[0]);
 
       checkStep(gpu_X, gpu_resid, gpu_grad, gpu_indices, indices, lambda,
@@ -425,4 +418,10 @@ y is a vector that is n by 1
    /* Shutdown */
     status = cublasShutdown();
   }
+}
+
+int main() {
+
+
+  return 0;
 }
