@@ -2,59 +2,86 @@
 #include <stdio.h>
 #include <cublas.h>
 #include <cuda.h>
+#include <iostream>
+
+#include <thrust/host_vector.h>
+#include <thrust/device_vector.h>
+#include <thrust/iterator/zip_iterator.h>
+#include <thrust/copy.h>
+#include <thrust/fill.h>
+#include <thrust/transform_reduce.h>
+#include <thrust/functional.h>
+#include <thrust/inner_product.h>
 #define index(i,j,ld) (((j)*(ld))+(i))
 
-/*
-Copies parts of matrix gpu_X into sub_X
-*/
-__global__ void copySubmatrix(float *gpu_X, float *sub_X, int *gpu_indices,
-                              int length_ind, int n, int p)
+typedef struct {
+    int n,p,num_lambda;
+    thrust::device_vector<float> X, y;
+    thrust::host_vector<float> lambda;
+} data;
+
+typedef struct {
+    thrust::device_vector<float> beta, beta_old, theta, theta_old, momentum;
+} coef;
+
+typedef struct {
+    float nLL;
+    thrust::device_vector<float> eta, yhat, residuals, grad, U, diff_beta, diff_theta;
+} opt;
+
+typedef struct {
+    int type, maxIt, currentIt, reset;
+    float gamma, t, thresh;
+} misc;
+
+struct absolute_value
 {
-  //int k = threadIdx.x;
-  int K = threadIdx.x + blockDim.x*blockIdx.x;
-  //__shared__ float gpu_indices_shared[blockDim.x];
+    __host__ __device__
+        float operator()(const float& x) const { 
+            if (x < 0) return -x;
+            else return x;
+        }
+};
 
-  if (K < n*length_ind) {
-    int j = (K - 1) / n;
-    int i = K - n * j;    
-    //gpu_indices_shared[k] = gpu_indices[j];
-    //__syncthreads();
-    //sub_X[j * n + i] = gpu_X[gpu_indices_shared[k] * n + i];
-    sub_X[j * n + i] = gpu_X[gpu_indices[j] * n + i];
-  }
-}
-
-/*
-Copies parts of a vector gpu_beta into gpu_Abeta
-*/
-__global__ void copySubBeta(float *gpu_beta, float *gpu_Abeta, int *gpu_indices,
-                            int length_ind)
+struct square
 {
-  int k = threadIdx.x + blockDim.x*blockIdx.x;
-  if (k < length_ind) {    
-    gpu_Abeta[k] = gpu_beta[gpu_indices[k]];
-  }
-}
+    __host__ __device__
+        float operator()(const float& x) const { 
+            return x*x;
+        }
+};
 
-/*
-Copies parts of a vector gpu_Abeta into gpu_beta
-*/
-__global__ void copyunSubBeta(float *gpu_beta, float *gpu_Abeta, int *gpu_indices,
-                              int length_ind)
-  
+struct soft_threshold
 {
-  int k = threadIdx.x + blockDim.x*blockIdx.x;
-  if (k < length_ind) {    
-    gpu_beta[gpu_indices[k]] = gpu_Abeta[k];
-  }
-}
+    const float lambda;
+
+    soft_threshold(float _lambda) : lambda(_lambda) {}
+
+    __host__ __device__
+        float operator()(const float& x) const { 
+            if (x > -lambda && x < lambda) return 0;
+            else if (x > lambda) return x - lambda;
+            else return x + lambda;
+        }
+};
+
+struct saxpy
+{
+    const float a;
+
+    saxpy(float _a) : a(_a) {}
+
+    __host__ __device__
+        float operator()(const float& x, const float& y) const { 
+            return a * x + y;
+        }
+};
 
 /*
-Finds components of the grad that have absolute value > lambda
-saves into gpu_isActive
+  Finds components of the grad that have absolute value > lambda
+  saves into gpu_isActive
 */
-__global__ void checkKKT(float *gpu_grad, int *gpu_isActive, float lambda, int p)
-
+__global__ void checkKKT(float* gpu_grad, int* gpu_isActive, float lambda, int p)
 {
   int k = threadIdx.x + blockDim.x*blockIdx.x;
   if (k < p){
@@ -62,8 +89,11 @@ __global__ void checkKKT(float *gpu_grad, int *gpu_isActive, float lambda, int p
   }
 }
 
+/*
+  gpu_beta is a vector of length p
+  thresholds gpu_beta at lambda
+*/
 __global__ void softKernel(float *gpu_beta, float lambda, int p)
-  
 {
   int k = threadIdx.x + blockDim.x*blockIdx.x;
   if(k < p){
@@ -77,351 +107,304 @@ __global__ void softKernel(float *gpu_beta, float lambda, int p)
 
   
 extern "C"{
- 
-  //copies part of gpu_X into sub_X
-  void subMatrix(float *gpu_X, float *sub_X, int *gpu_indices, int length_ind, int n, int p){
-    int block_size = 256;
-    int n_blocks = n*length_ind/block_size + ((n*length_ind)%block_size == 0 ? 0:1);
-    
-    copySubmatrix <<< block_size, n_blocks >>> (gpu_X, sub_X, gpu_indices, length_ind, n, p);
-  }
-  
-  void subBeta(float *gpu_beta, float *gpu_Abeta, int *gpu_indices, int length_ind){
-    int block_size = 256;
-    int n_blocks = length_ind/block_size + ((length_ind)%block_size == 0 ? 0:1);
-    
-    copySubBeta <<< block_size, n_blocks >>> (gpu_beta, gpu_Abeta, gpu_indices, length_ind);
-  }
 
-  void unsubBeta(float *gpu_beta, float *gpu_Abeta, int *gpu_indices, int length_ind){
-    int block_size = 256;
-    int n_blocks = length_ind/block_size + ((length_ind)%block_size == 0 ? 0:1);
-    
-    copyunSubBeta <<< block_size, n_blocks >>> (gpu_beta, gpu_Abeta, gpu_indices, length_ind);
-  }
-
-  void softThreshold(float *gpu_beta, float lambda, float step, int p){
-    int block_size = 256;
-    int n_blocks = p/block_size + ((p)%block_size == 0 ? 0:1);
-    
-    softKernel <<< block_size, n_blocks >>> (gpu_beta, lambda*step, p);
-  }
-
-  //transfers gpu_vector[ind] into returnPtr
-  void getIndVal(float *gpu_vector, int ind, float *returnPtr){
-    cudaMemcpy(returnPtr, gpu_vector + ind * sizeof(float), sizeof(float), cudaMemcpyDeviceToHost);
-  }
-
-/*
-gpu_grad is passed in, but it is actually immediately reset to be X * (residuals)
-*/
-  void checkStep(float *gpu_X, float *gpu_resid, float *gpu_grad, int* gpu_indices,
-                 int* indices, float lambda, int *cont, int *gpu_isActive, int *isActive,
-                 int *numActive, int *gpu_numActive, int *n, int *p){
-    /* 
-       Calculating new grad
-       computes X^T (residuals) and saves it into gpu_grad
-    */
-    cublasSgemv('t', n[0], p[0], 1, gpu_X, n[0], gpu_resid, 1, 0, gpu_grad, 1);
-
-    /* Checking if KKT holds */
-    int block_size = 256;
-    int n_blocks = p[0]/block_size + ((p[0])%block_size == 0 ? 0:1);
-    checkKKT <<< block_size, n_blocks >>> (gpu_grad, gpu_isActive, lambda, p[0]);
- 
-    int oldNumActive = numActive[0];
-    numActive[0] = 0;
-
-    cudaMemcpy(isActive, gpu_isActive, sizeof(int)*p[0], cudaMemcpyDeviceToHost);
-
-    int counter = 0;
-    for (int i=0; i<p[0];i++){
-      if (isActive[i] != 0){
-	      indices[counter] = i;
-	      counter++;
-      }
-    }
-    numActive[0] = counter;
-
-    cont[0] = 0;
-    if (numActive[0] > oldNumActive) cont[0] = 1;
-    cudaMemcpy(gpu_numActive, numActive, sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(gpu_indices, indices, sizeof(int)*p[0],cudaMemcpyHostToDevice);
-  }
-
-  void gradStep(float *gpu_X, float *gpu_y, float *gpu_resid, float *gpu_fit,
-                float *gpu_beta, float *gpu_oldBeta, float *gpu_grad, float *gpu_diff,
-                float lambda, float *thresh, int *maxIt, float *step_size, float *beta,
-                int *n, int *p, float *diff, float *step) {
- 
-    float oldLL = 0;
-    float newLL = 0;
-    float dot_val = 0;
-    int max_move_ind = 0;
-    float *max_move;
-    max_move = (float*)malloc(sizeof(float));
-    max_move[0] = 0;
-
-    /* Copying beta to oldBeta for backtracking */
-    cublasScopy(p[0], gpu_beta, 1, gpu_oldBeta, 1);
-    
-    /* Calculating the new fit 
-       Computes gpu_X (gpu_beta) and store into gpu_fit 
-    */
-    cublasSgemv('n', n[0], p[0], 1, gpu_X, n[0], gpu_beta, 1, 0, gpu_fit, 1);
-
-    /* Calculating new residuals */
-    cublasScopy(n[0], gpu_y, 1, gpu_resid, 1);  // Copying y to resid
-    cublasSaxpy(n[0], -1, gpu_fit, 1, gpu_resid, 1);  // Subtracting fit from y (which is stored in resid)
-
-    /* Calculating oldLL based on resid */
-
-    oldLL = cublasSnrm2(n[0], gpu_resid, 1);
-  
-    /* Calculating new grad */
-    //cublasSgemv('t', n[0], p[0], 1, gpu_X, n[0], gpu_resid, 1, 0, gpu_grad, 1);
-
-    /* Step beta in the proper direction
-       Computes step_size (gpu_grad) and stores in gpu_beta 
-    */
-    //cublasSaxpy(p[0], step_size[0], gpu_grad, 1, gpu_beta, 1);
-
-    /*
-      Compute gpu_beta = gpu_beta + step_size * X^T (residuals)
-    */
-    cublasSgemv('t', n[0], p[0], step_size[0], gpu_X, n[0], gpu_resid, 1, 1, gpu_beta, 1);
-    
-    /* Soft-threshholding beta by lambda */
-    
-    softThreshold(gpu_beta, lambda, step_size[0], p[0]);
-    
-    /* Step size optimization */
-    // Calculating RHS
-    /* Calculating difference between beta and oldBeta */
-    
-    cublasScopy(p[0], gpu_beta, 1, gpu_diff, 1);
-    cublasSaxpy(p[0], -1, gpu_oldBeta, 1, gpu_diff, 1);
-    
-    /* calculating the dot product between grad and diff */
-    
-    dot_val = cublasSdot(p[0], gpu_diff, 1, gpu_grad, 1);
-    
-    /* Calculating length of move */
-    
-    *step = cublasSnrm2(p[0], gpu_diff, 1);
-    max_move_ind = cublasIsamax(p[0], gpu_diff, 1); /// Problem???
-    
-    getIndVal(gpu_diff, (max_move_ind-1), max_move);
-    max_move[0] = max_move[0] * max_move[0];
-
-    /* Terrible way to do this! Don't need to copy the whole vector! */
-    //   cublasGetVector(p[0], sizeof(float), gpu_diff, 1, diff, 1);
-    //max_move = diff[max_move_ind-1]*diff[max_move_ind-1];
-    
-    // Calculating LHS
-    
-    cublasSgemv('n', n[0], p[0], 1, gpu_X, n[0], gpu_beta, 1, 0, gpu_fit,1);
-    cublasScopy(n[0], gpu_y, 1, gpu_resid, 1);
-    cublasSaxpy(n[0], -1, gpu_fit, 1, gpu_resid, 1);
-    newLL = cublasSnrm2(n[0], gpu_resid, 1);
-    
-    if(newLL*newLL/2 > oldLL*oldLL/2 - dot_val + step[0]*step[0]/(2*step_size[0])){
-      cublasScopy(p[0], gpu_oldBeta, 1, gpu_beta, 1);
-      step_size[0] = step_size[0] * 0.8;
-      step[0] = 100000;
-    }
-    free(max_move);
-  }
-
-  void singleSol(float *gpu_X, float *gpu_y, float *gpu_resid, float *gpu_fit,
-                 float *gpu_beta, float *gpu_oldBeta, float *gpu_grad, float *gpu_diff,
-                 float lambda, float *thresh, int *maxIt, float *step_size_set, float *beta,
-                 int *n, int *p, float *diff, int* gpu_isActive, int* isActive, int* numActive,
-                 int* gpu_numActive, int* gpu_indices, int *indices,float* gpu_AX,
-                 float* gpu_Abeta, float* gpu_AoldBeta, float* gpu_Agrad, float* gpu_Adiff,
-                 float* Abeta, float* Adiff) {
-    int count = 0;
-    int cont = 1;
-    int inner_cont = 1; // inner loop variable (for active set)
-    float step = 0;
-    float init_step = step_size_set[0];
-
-    int act_p = numActive[0];
-
-    checkStep(gpu_X, gpu_resid, gpu_grad, gpu_indices, indices, lambda, &cont,
-              gpu_isActive, isActive, numActive, gpu_numActive, n, p);
-   
-    while (cont == 1){
-      inner_cont = 1;
-      /* Defining all the new active variables */
-    
-      subBeta(gpu_beta, gpu_Abeta, gpu_indices, numActive[0]);
-   
-      subMatrix(gpu_X, gpu_AX, gpu_indices, numActive[0], n[0], p[0]);    
-
-      while (inner_cont == 1){    
-        
-        act_p = numActive[0];
-        gradStep(gpu_AX, gpu_y, gpu_resid, gpu_fit, gpu_Abeta, gpu_AoldBeta,
-                 gpu_Agrad, gpu_Adiff, lambda, thresh, maxIt, step_size_set, Abeta,
-                 n, &act_p, Adiff, &step);
-
-        /* Checking if stop criteria are satisfied */
-        count++;
-        if (count > maxIt[0] || step < thresh[0]) inner_cont = 0; break;
-      }
-    
-      unsubBeta(gpu_beta, gpu_Abeta, gpu_indices, numActive[0]);
-
-      checkStep(gpu_X, gpu_resid, gpu_grad, gpu_indices, indices, lambda,
-                &cont, gpu_isActive, isActive, numActive, gpu_numActive, n, p);
-      
-    }
-    step_size_set[0] = init_step;
-  }
-  
+void activePathSol(float*, float*, int*, int*, float*, int*,
+                   int*, float*, int*, float*, float*,
+                   float*, int*);
+void init(data*, coef*, opt*, misc*,
+          float*, float*, int, int, float*, int,
+          int, float*, int, float, float,
+          float, int);
+void pathSol(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, float* beta);
+void singleSolve(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j);
+float calcNegLL(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, thrust::device_vector<float> pvector, int j);
+void gradStep(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j);
+void proxCalc(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j);
+void nestStep(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j, int iter);
+int checkStep(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j);
+int checkCrit(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j, int iter);
+void shutdown(data* ddata, coef* dcoef, opt* dopt, misc* dmisc);
+float device_vector2Norm(thrust::device_vector<float> x);
+void device_vectorSoftThreshold(thrust::device_vector<float> x, thrust::device_vector<float>, float lambda);
+void device_vectorSgemv(thrust::device_vector<float> A,
+                          thrust::device_vector<float> x,
+                          thrust::device_vector<float> b,
+                          int n, int p);
+void device_vectorCrossProd(thrust::device_vector<float> X,
+                              thrust::device_vector<float> y,
+                              thrust::device_vector<float> b,
+                              int n, int p);
  
 
 
-/*
-Entry point for R
-X is a matrix (represented as a 1d array) that is n by p
-y is a vector that is n by 1
-*/
-  void activePathSol(float* X, float* y, int* n, int* p, int* maxIt, float* thresh,
-                     float* step_size, float* lambda, float* beta, int* num_lambda)
+  /*
+    Entry point for R
+    X is a matrix (represented as a 1d array) that is n by p
+    y is a vector that is n by 1
+  */
+  void activePathSol(float* X, float* y, int* n, int* p, float* lambda, int* num_lambda,
+                     int* type, float* beta, int* maxIt, float* thresh, float* gamma,
+                     float* t, int* reset)
   { 
+    //setup pointers
+    data* ddata = NULL; coef* dcoef = NULL; opt* dopt = NULL; misc* dmisc = NULL;
+
+    //allocate pointers, init cublas
+    init(ddata, dcoef, dopt, dmisc,
+         X, y, n[0], p[0], lambda, num_lambda[0],
+         type[0], beta, maxIt[0], thresh[0], gamma[0],
+         t[0], reset[0]);
+
+    //solve
+    //pathSol(ddata, dcoef, dopt, dmisc, beta);
+
+    //shutdown
+    shutdown(ddata, dcoef, dopt, dmisc);
+  }
+
+  void init(data* ddata, coef* dcoef, opt* dopt, misc* dmisc,
+            float* X, float* y, int n, int p, float* lambda, int num_lambda,
+            int type, float* beta, int maxIt, float thresh, float gamma,
+            float t, int reset)
+  {
     int number_of_devices;
     cudaGetDeviceCount(&number_of_devices);
     cudaSetDevice(0);
-
-    int i,j;
-    cublasStatus status;
-
     cublasInit();
 
-    /* ALLOCATING HOST MEMORY */
-   
-    float *grad = (float*)malloc(p[0]*sizeof(float));
-    float *oldBeta = (float*)malloc(p[0]*sizeof(float));
-    float *workingBeta = (float*)malloc(p[0]*sizeof(float));
-    float *fit = (float*)malloc(n[0]*sizeof(float));
-    float *resid = (float*)malloc(n[0]*sizeof(float));
-    float *diff = (float*)malloc(p[0]*sizeof(float));
-    int *isActive = (int*)malloc(p[0]*sizeof(int));
-    int *numActive = (int*)malloc(sizeof(int));
-    int *indices = (int*)malloc(p[0]*sizeof(float)); // Ever active index
+    /* Set data variables */
+    ddata = (data*)malloc(sizeof(data));
 
-    /* INITIALIZING ARRAY VALUES */
-    
-    for (i=0;i<n[0];i++){
-      resid[i] = y[i];
-      fit[i] = 0;
-    }
-    for (i=0;i<p[0];i++){
-      grad[i] = 0;
-      oldBeta[i] = 0;
-      isActive[i] = 0;
-      indices[i] = -1;
-    }
-    numActive[0] = 0;
+    ddata->X = thrust::device_vector<float>(X, X+(n*p));
+    ddata->y = thrust::device_vector<float>(y, y+n);
+    ddata->lambda = thrust::host_vector<float>(lambda, lambda+num_lambda);
+    ddata->n = n;
+    ddata->p = p;
+    ddata->num_lambda = num_lambda;
 
-    /* INITIALIZING POINTERS FOR THE GPU VERSIONS OF VARIABLES */
+    /* Set coef variables */
+    dcoef = (coef*)malloc(sizeof(coef));
 
-    float* gpu_X; float* gpu_y; float* gpu_workingBeta; float* gpu_oldBeta; float* gpu_fit;
-    float* gpu_resid; float* gpu_grad; float* gpu_diff;
-    int* gpu_isActive; int* gpu_numActive; int* gpu_indices;
+    dcoef->beta = thrust::device_vector<float>(p,0);
+    dcoef->beta_old = thrust::device_vector<float>(p,0);
+    dcoef->theta = thrust::device_vector<float>(p,0);
+    dcoef->theta_old = thrust::device_vector<float>(p,0);
+    dcoef->momentum = thrust::device_vector<float>(p,0);
 
-    /* ALLOCATING MEMORY ON THE GPU */
+    /* Set optimization variables */
+    dopt = (opt*)malloc(sizeof(opt));
 
-    status=cublasAlloc(n[0]*p[0],sizeof(float),(void**)&gpu_X);
-    status=cublasAlloc(n[0],sizeof(float),(void**)&gpu_y);
-    status=cublasAlloc(n[0],sizeof(float),(void**)&gpu_resid);
-    status=cublasAlloc(n[0],sizeof(float),(void**)&gpu_fit);
-    status=cublasAlloc(p[0],sizeof(float),(void**)&gpu_workingBeta);
-    status=cublasAlloc(p[0],sizeof(float),(void**)&gpu_oldBeta);
-    status=cublasAlloc(p[0],sizeof(float),(void**)&gpu_grad);
-    status=cublasAlloc(p[0],sizeof(float),(void**)&gpu_diff);
-    status=cublasAlloc(p[0],sizeof(int),(void**)&gpu_isActive);
-    status=cublasAlloc(p[0], sizeof(int),(void**)&gpu_indices);
-    cudaMalloc((void**) &gpu_numActive, sizeof(int));
+    dopt->eta = thrust::device_vector<float>(p,0);
+    dopt->yhat = thrust::device_vector<float>(n,0);
+    dopt->residuals = thrust::device_vector<float>(n,0);
+    dopt->grad = thrust::device_vector<float>(p,0);
+    dopt->U = thrust::device_vector<float>(p,0);
+    dopt->diff_beta = thrust::device_vector<float>(p,0);
+    dopt->diff_theta = thrust::device_vector<float>(p,0);
 
-    /* Defining submatrix/activeset stuff */
+    /* Set misc variables */
+    dmisc = (misc*)malloc(sizeof(misc));
 
-    float *Abeta = (float*)malloc(p[0]*sizeof(float));
-    float *Adiff = (float*)malloc(p[0]*sizeof(float));
-   
-    float *gpu_AX; float *gpu_Abeta; float *gpu_AoldBeta; float *gpu_Agrad; float *gpu_Adiff;
-    cublasAlloc(n[0]*p[0],sizeof(float),(void**)&gpu_AX);
-    cublasAlloc(p[0], sizeof(int),(void**)&gpu_Abeta);
-    cublasAlloc(p[0], sizeof(int),(void**)&gpu_AoldBeta);
-    cublasAlloc(p[0], sizeof(int),(void**)&gpu_Agrad);
-    cublasAlloc(p[0], sizeof(int),(void**)&gpu_Adiff);
+    dmisc->type = type;
+    dmisc->maxIt = maxIt;
+    dmisc->currentIt = 0;
+    dmisc->gamma = gamma;
+    dmisc->t = t;
+    dmisc->reset = reset;
+    dmisc->thresh = thresh;
+  }
 
-    /* MOVING THE MATRICES OVER TO GPU MEMORY */
+  void pathSol(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, float* beta)
+  {
+    int j;
+    for (j=0; j < ddata->num_lambda; j++){
+      dcoef->beta_old = dcoef->beta;
+      dcoef->theta_old = dcoef->theta;
+      singleSolve(ddata, dcoef, dopt, dmisc, j);
 
-    status=cublasSetMatrix(n[0],p[0],sizeof(float),X,n[0],gpu_X,n[0]);
-    status=cublasSetVector(n[0],sizeof(float),y,1,gpu_y,1);
-    status=cublasSetVector(n[0],sizeof(float),resid,1,gpu_resid,1);
-    status=cublasSetVector(n[0],sizeof(float),fit,1,gpu_fit,1);
-    status=cublasSetVector(p[0],sizeof(float),oldBeta,1,gpu_workingBeta,1);
-    status=cublasSetVector(p[0],sizeof(float),oldBeta,1,gpu_oldBeta,1);
-    status=cublasSetVector(p[0],sizeof(float),grad,1,gpu_grad,1);
-    status=cublasSetVector(p[0],sizeof(int),isActive,1,gpu_isActive,1);
-    status=cublasSetVector(p[0],sizeof(int),indices,1,gpu_indices,1);
-    cudaMemcpy(gpu_numActive, numActive, sizeof(int), cudaMemcpyHostToDevice);
-
-    /* RUNNING A LOOP TO SOVLE FOR EACH LAMBDA */
-
-    for(j=0; j < num_lambda[0]; j++){
-
-      //solve for just one lambda
-      singleSol(gpu_X, gpu_y, gpu_resid, gpu_fit, gpu_workingBeta, gpu_oldBeta, gpu_grad,
-                gpu_diff, lambda[j], thresh, maxIt, step_size, workingBeta, n, p, diff,
-                gpu_isActive, isActive, numActive, gpu_numActive, gpu_indices, indices,
-                gpu_AX, gpu_Abeta, gpu_AoldBeta, gpu_Agrad, gpu_Adiff, Abeta, Adiff);
-
-      //Extract the p elements of the beta vector
-      cublasGetVector(p[0], sizeof(float), gpu_workingBeta, 1, workingBeta, 1);
-
-      //reset numActive and gpu_numActive to 0 after solving for the lambda
-      numActive[0] = 0;
-      cudaMemcpy(gpu_numActive, numActive, sizeof(int), cudaMemcpyHostToDevice);
-
-      //workingBeta is a vector for one particular lambda
-      //Place it inside larger matrix beta
-      for(i=0; i < p[0]; i++){
-        beta[j*p[0]+i] = workingBeta[i];
+      int startIndex = j*ddata->p;
+      int i;
+      for(i=0; i < ddata->p; i++){
+        beta[startIndex+i] = dcoef->beta[i];
       }
     }
-    
-    /* FREEING UP MEMORY */
-
-    free ( grad ); free( fit ); free( resid ); free( oldBeta ); free( workingBeta ); free( diff ); free ( numActive ); free( Abeta ); free( Adiff ); free( indices ); free( isActive );
-    status = cublasFree(gpu_X);
-    status = cublasFree(gpu_y);
-    status = cublasFree(gpu_grad);
-    status = cublasFree(gpu_workingBeta);
-    status = cublasFree(gpu_oldBeta);
-    status = cublasFree(gpu_resid);
-    status = cublasFree(gpu_fit);
-    status = cublasFree(gpu_diff);
-    status = cublasFree(gpu_isActive);
-    status = cublasFree(gpu_indices);
-    cudaFree(gpu_numActive);
-    cublasFree(gpu_AX);
-    cublasFree(gpu_Agrad);
-    cublasFree(gpu_Abeta);
-    cublasFree(gpu_AoldBeta);
-    cublasFree(gpu_Adiff);
-    
-   /* Shutdown */
-    status = cublasShutdown();
   }
+
+  void singleSolve(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j)
+  {
+    int iter = 0;
+    while (checkCrit(ddata, dcoef, dopt, dmisc, j, iter) == 0)
+    {
+      calcNegLL(ddata, dcoef, dopt, dmisc, dcoef->beta, j);
+      while (checkStep(ddata, dcoef, dopt, dmisc, j) == 0)
+      {
+        gradStep(ddata, dcoef, dopt, dmisc, j);
+      }
+      nestStep(ddata, dcoef, dopt, dmisc, j, iter);
+      iter = iter + 1;
+    }
+  }
+
+  float calcNegLL(data* ddata, coef* dcoef, opt* dopt, misc* dmisc,
+                  thrust::device_vector<float> pvector, int j)
+  {
+    device_vectorSgemv(ddata->X, pvector, dopt->eta, ddata->n, ddata->p);
+    switch (dmisc->type)
+    {
+      case 0:  //normal
+      {
+        dopt->nLL = 0.5 * device_vector2Norm(dopt->residuals); break;
+      }
+      default:  //default to normal
+      { 
+        dopt->nLL = 0.5 * device_vector2Norm(dopt->residuals); break;
+      }
+    }
+    return dopt->nLL;
+  }
+
+  void gradStep(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j)
+  {
+    switch (dmisc->type)
+    {
+      case 0:  //normal
+      {
+        //yhat = XB
+        device_vectorSgemv(ddata->X, dcoef->beta, dopt->yhat, ddata->n, ddata->p);
+        //residuals = y - yhat
+        thrust::transform(ddata->y.begin(), ddata->y.end(),
+                          dopt->yhat.begin(),
+                          dopt->residuals.begin(),
+                          thrust::minus<float>());
+        //grad = X^T residuals
+        device_vectorCrossProd(ddata->X, dopt->residuals, dopt->grad, ddata->n, ddata->p);
+        //U = -t * grad + beta
+        thrust::transform(dopt->grad.begin(), dopt->grad.end(),
+                          dcoef->beta.begin(),
+                          dopt->U.begin(),
+                          saxpy(-dmisc->t));
+        proxCalc(ddata, dcoef, dopt, dmisc, j);
+        break;
+      }
+      default:
+      {
+        break;
+      }
+    } 
+  }
+
+  void proxCalc(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j)
+  {
+    switch (dmisc->type)
+    {
+      case 0:  //normal
+      {
+        device_vectorSoftThreshold(dopt->U, dcoef->theta, ddata->lambda[j] * dmisc->t);
+        break;
+      }
+      default:
+      {
+        break;
+      }
+    }
+  }
+
+  void nestStep(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j, int iter)
+  {
+    dcoef->beta_old = dcoef->beta;
+    //momentum = theta - theta old
+    thrust::transform(dcoef->theta.begin(), dcoef->theta.end(),
+                      dcoef->theta_old.begin(),
+                      dcoef->momentum.begin(),
+                      thrust::minus<float>());
+    float scale = (float) (iter % dmisc->reset) / (iter % dmisc->reset + 3);
+    //beta = theta + scale*momentum
+    thrust::transform(dcoef->momentum.begin(), dcoef->momentum.end(),
+                      dcoef->theta.begin(),
+                      dcoef->beta.begin(),
+                      saxpy(scale));
+    dcoef->theta_old = dcoef->theta;
+  }
+
+  int checkStep(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j)
+  {
+    float nLL = calcNegLL(ddata, dcoef, dopt, dmisc, dcoef->theta, j);
+    //iprod is the dot product of diff and grad
+    float iprod = thrust::inner_product(dopt->diff_theta.begin(), dopt->diff_theta.end(),
+                                        dopt->grad.begin(),
+                                        0); 
+    float sumSquareDiff = device_vector2Norm(dopt->diff_theta);
+
+    int check = (int)(nLL < (dopt->nLL + iprod + sumSquareDiff) / (2 * dmisc->t));
+    if (check == 0) dmisc->t = dmisc->t * dmisc->gamma;
+      
+    return check;
+  }
+
+  int checkCrit(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j, int iter)
+  {
+    absolute_value unary_op;
+    thrust::maximum<float> binary_op;
+    float init = 0;
+    float move = thrust::transform_reduce(dopt->diff_beta.begin(), dopt->diff_beta.end(),
+                                          unary_op, init, binary_op);
+      
+    return (iter > dmisc->maxIt) || (move < dmisc->thresh);
+  }
+
+  void shutdown(data* ddata, coef* dcoef, opt* dopt, misc* dmisc)
+  {
+    free(ddata); free(dcoef); free(dopt); free(dmisc);
+    cublasShutdown();
+  }
+
+  /*
+    MISC MATH FUNCTIONS
+  */
+
+  // ||x||_2^2
+  float device_vector2Norm(thrust::device_vector<float> x)
+  {  
+    square unary_op;
+    thrust::plus<float> binary_op;
+    float init = 0;
+    return thrust::transform_reduce(x.begin(), x.end(), unary_op, init, binary_op);
+  }
+
+  // b = X^T y
+  void device_vectorCrossProd(thrust::device_vector<float> X,
+                              thrust::device_vector<float> y,
+                              thrust::device_vector<float> b,
+                              int n, int p)
+  {
+    cublasSgemv('t', n, p, 1,
+                thrust::raw_pointer_cast(&X[0]), n,
+                thrust::raw_pointer_cast(&y[0]), 1,
+                0, thrust::raw_pointer_cast(&b[0]), 1); 
+  }
+
+  // b = Ax
+  void device_vectorSgemv(thrust::device_vector<float> A,
+                          thrust::device_vector<float> x,
+                          thrust::device_vector<float> b,
+                          int n, int p)
+  {
+    cublasSgemv('n', n, p, 1,
+                thrust::raw_pointer_cast(&A[0]), n,
+                thrust::raw_pointer_cast(&x[0]), 1,
+                0, thrust::raw_pointer_cast(&b[0]), 1);
+  }
+
+  // S(x, lambda)
+  void device_vectorSoftThreshold(thrust::device_vector<float> x,
+                                  thrust::device_vector<float> dest,
+                                  float lambda)
+  {
+    thrust::transform(x.begin(), x.end(), dest.begin(), soft_threshold(lambda));
+  }
+
 }
 
 int main() {
-
-
   return 0;
 }
