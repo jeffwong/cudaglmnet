@@ -6,6 +6,7 @@
 
 #include <thrust/host_vector.h>
 #include <thrust/device_vector.h>
+#include <thrust/device_ptr.h>
 #include <thrust/iterator/zip_iterator.h>
 #include <thrust/copy.h>
 #include <thrust/fill.h>
@@ -16,21 +17,21 @@
 
 typedef struct {
     int n,p,num_lambda;
-    thrust::device_vector<float> X, y;
+    thrust::device_ptr<float> X, y;
     thrust::host_vector<float> lambda;
 } data;
 
 typedef struct {
-    thrust::device_vector<float> beta, beta_old, theta, theta_old, momentum;
+    thrust::device_ptr<float> beta, beta_old, theta, theta_old, momentum;
 } coef;
 
 typedef struct {
     float nLL;
-    thrust::device_vector<float> eta, yhat, residuals, grad, U, diff_beta, diff_theta;
+    thrust::device_ptr<float> eta, yhat, residuals, grad, U, diff_beta, diff_theta;
 } opt;
 
 typedef struct {
-    int type, maxIt, currentIt, reset;
+    int type, maxIt, reset;
     float gamma, t, thresh;
 } misc;
 
@@ -172,46 +173,46 @@ void device_vectorCrossProd(thrust::device_vector<float> X,
     cudaSetDevice(0);
     cublasInit();
 
-    /* Set data variables */
     ddata = (data*)malloc(sizeof(data));
+    dcoef = (coef*)malloc(sizeof(coef));
+    dopt = (opt*)malloc(sizeof(opt));
+    dmisc = (misc*)malloc(sizeof(misc));
 
-    ddata->X = thrust::device_vector<float>(X, X+(n*p));
-    ddata->y = thrust::device_vector<float>(y, y+n);
+    /* Set data variables */
+
+    ddata->X = thrust::device_vector<float>(X, X+(n*p)).data();
+    ddata->y = thrust::device_vector<float>(y, y+n).data();
     ddata->lambda = thrust::host_vector<float>(lambda, lambda+num_lambda);
     ddata->n = n;
     ddata->p = p;
     ddata->num_lambda = num_lambda;
 
     /* Set coef variables */
-    dcoef = (coef*)malloc(sizeof(coef));
 
-    dcoef->beta = thrust::device_vector<float>(p,0);
+    /*dcoef->beta = thrust::device_vector<float>(p,0);
     dcoef->beta_old = thrust::device_vector<float>(p,0);
     dcoef->theta = thrust::device_vector<float>(p,0);
     dcoef->theta_old = thrust::device_vector<float>(p,0);
-    dcoef->momentum = thrust::device_vector<float>(p,0);
+    dcoef->momentum = thrust::device_vector<float>(p,0);*/
 
     /* Set optimization variables */
-    dopt = (opt*)malloc(sizeof(opt));
 
-    dopt->eta = thrust::device_vector<float>(p,0);
+    /*dopt->eta = thrust::device_vector<float>(p,0);
     dopt->yhat = thrust::device_vector<float>(n,0);
     dopt->residuals = thrust::device_vector<float>(n,0);
     dopt->grad = thrust::device_vector<float>(p,0);
     dopt->U = thrust::device_vector<float>(p,0);
     dopt->diff_beta = thrust::device_vector<float>(p,0);
-    dopt->diff_theta = thrust::device_vector<float>(p,0);
+    dopt->diff_theta = thrust::device_vector<float>(p,0);*/
 
     /* Set misc variables */
-    dmisc = (misc*)malloc(sizeof(misc));
 
-    dmisc->type = type;
+    /*dmisc->type = type;
     dmisc->maxIt = maxIt;
-    dmisc->currentIt = 0;
     dmisc->gamma = gamma;
     dmisc->t = t;
     dmisc->reset = reset;
-    dmisc->thresh = thresh;
+    dmisc->thresh = thresh;*/
   }
 
   void pathSol(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, float* beta)

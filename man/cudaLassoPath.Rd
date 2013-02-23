@@ -2,10 +2,11 @@
 \alias{cudaLassoPath}
 \title{Lasso on a GPU}
 \usage{
-  cudaLassoPath(X, y,
-    B = matrix(0, ncol(X), length(lambda)), lambda,
-    standardize.x = T, standardize.y = T, step_size = 0.1,
-    threshold = 1e-06, maxit = 1000)
+  cudaLassoPath(X, y, lambda, family = "gaussian",
+    B = matrix(0, ncol(X), length(lambda)),
+    standardize.x = T, standardize.y = T, maxIt = 1000,
+    threshold = 1e-06, gamma = 1, step_size = 0.5,
+    reset = 5)
 }
 \arguments{
   \item{X}{design matrix X}

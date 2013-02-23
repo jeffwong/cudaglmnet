@@ -12,10 +12,12 @@
 #' @param maxit maximum iterations
 #' @useDynLib GPULassoPath
 #' @export
-cudaLassoPath <- function(X, y, B = matrix(0, ncol(X), length(lambda)),
-                          lambda, standardize.x = T, standardize.y = T,
-                          step_size= 0.1, threshold = 1e-6,
-                          maxit = 1e3) {
+cudaLassoPath <- function(X, y, lambda,
+                          family = "gaussian",
+                          B = matrix(0, ncol(X), length(lambda)),
+                          standardize.x = T, standardize.y = T,
+                          maxIt = 1e3, 
+                          threshold = 1e-6, gamma = 1, step_size = 0.5, reset = 5) {
   
   n <- nrow(X)
   p <- ncol(X)
@@ -33,10 +35,17 @@ cudaLassoPath <- function(X, y, B = matrix(0, ncol(X), length(lambda)),
   intercept = mean(y)
   y = y - intercept
 
-  fit <- .C("activePathSol", X = as.single(X), y = as.single(y), n = as.integer(n),
-            p = as.integer(p), maxIt = as.integer(maxit), thresh = as.single(threshold),
-            step_size= as.single(step_size), lambda = as.single(lambda),
-            beta = as.single(B), num_lambda = as.integer(length(lambda)), package = "RGPULasso")
+  type = switch(family,
+                "gaussian" = 0
+               )
+
+  fit <- .C("activePathSol",
+            X = as.single(X), y = as.single(y), n = as.integer(n), p = as.integer(p),
+            lambda = as.single(lambda), num_lambda = as.integer(length(lambda)),
+            type = as.integer(type), beta = as.single(B), maxIt = as.integer(maxIt),
+            thresh = as.single(threshold), gamma = as.single(gamma), t = as.single(step_size),
+            reset = as.integer(reset),
+            package = "RGPULasso")
   fit$X.sd = X.sd
   fit$intercept = intercept
   fit$y.sd = y.sd
