@@ -22,6 +22,7 @@ all: $(TARGETS)
 
 $(TARGETS): $(OBJS13) $(CULA_OBJS) $(OBJS)
 	$(NVCC) -O3 -shared $(LD_PARAMS) $(LIBS) $(OBJS13) $(CULA_OBJS) $(OBJS) -o $@
+	$(NVCC) -O3 main.cu -o main $(LIBS)
 
 $(OBJS): %.o: %.$(EXT)
 	$(NVCC) -O3 -c $(INCS) $(PARAMS) $^ -o $@
