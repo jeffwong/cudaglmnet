@@ -9,6 +9,8 @@
 #include <thrust/device_vector.h>
 #include <thrust/device_ptr.h>
 #include <thrust/functional.h>
+#include <thrust/transform.h>
+#include <thrust/reduce.h>
 #include <thrust/transform_reduce.h>
 #define index(i,j,ld) (((j)*(ld))+(i))
 
@@ -196,28 +198,36 @@ thrust::device_ptr<float> makeEmptyDeviceVector(int size);
       
       singleSolve(ddata, dcoef, dopt, dmisc, j);
 
-      thrust::device_vector<float> dbeta(dcoef->beta, &dcoef->beta[ddata->p]);
+      /*thrust::device_vector<float> dbeta(dcoef->beta, &dcoef->beta[ddata->p]);
       thrust::host_vector<float> hbeta = dbeta;
       int startIndex = j*ddata->p;
       int i = 0;
       for(i=0; i < ddata->p; i++){
         beta[startIndex+i] = hbeta[i];
-      }
+      }*/
     }
   }
 
   void singleSolve(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j)
   {
     int iter = 0;
-    while (checkCrit(ddata, dcoef, dopt, dmisc, j, iter) == 0)
+    int outerIter, innerIter;
+    for (outerIter=0; outerIter < 2; outerIter++)
     {
+      printf("calcNegLL\n");
       calcNegLL(ddata, dcoef, dopt, dmisc, dcoef->beta, j);
-      while (checkStep(ddata, dcoef, dopt, dmisc, j) == 0)
+      for (innerIter=0; innerIter < 2; innerIter++)
       {
+        printf("gradStep\n");
         gradStep(ddata, dcoef, dopt, dmisc, j);
+        printf("checkStep\n");
+        //if (checkStep(ddata, dcoef, dopt, dmisc, j) == 1) break;
       }
-      nestStep(ddata, dcoef, dopt, dmisc, j, iter);
-      iter = iter + 1;
+      printf("nestStep\n");
+      //nestStep(ddata, dcoef, dopt, dmisc, j, iter);
+      iter++;
+      printf("checkCrit\n");
+      //if (checkCrit(ddata, dcoef, dopt, dmisc, j, iter) == 1) break;
     }
   }
 
@@ -252,8 +262,9 @@ thrust::device_ptr<float> makeEmptyDeviceVector(int size);
                         dopt->yhat,
                         ddata->n, ddata->p);
         //residuals = y - yhat
-        printf("grad step transform");
-        thrust::transform(ddata->y, &ddata->y[ddata->n],
+        thrust::device_ptr<float> test = ddata->y;
+        thrust::transform(test, test + ddata->n,
+        //thrust::transform(ddata->y, &ddata->y[ddata->n],
                           dopt->yhat,
                           dopt->residuals,
                           thrust::minus<float>());
@@ -262,10 +273,10 @@ thrust::device_ptr<float> makeEmptyDeviceVector(int size);
                             dopt->grad,
                             ddata->n, ddata->p);
         //U = -t * grad + beta
-        thrust::transform(dopt->grad, &dopt->grad[ddata->p],
+        /*thrust::transform(dopt->grad, &dopt->grad[ddata->p],
                           dcoef->beta,
                           dopt->U,
-                          saxpy(-dmisc->t));
+                          saxpy(-dmisc->t));*/
         proxCalc(ddata, dcoef, dopt, dmisc, j);
         break;
       }
@@ -340,7 +351,7 @@ thrust::device_ptr<float> makeEmptyDeviceVector(int size);
   }
 
   /*
-    MISC MATH FUNCTIONS
+    MISC UTIL FUNCTIONS
   */
 
   thrust::device_ptr<float> makeDeviceVector(float* x, int size)
@@ -355,6 +366,10 @@ thrust::device_ptr<float> makeEmptyDeviceVector(int size);
     thrust::device_vector<float> dx = x;
     return &dx[0];
   }
+
+  /*
+    MISC MATH FUNCTIONS
+  */
 
   // ||x||_max
   float device_ptrMaxNorm(thrust::device_ptr<float> x, int length)
@@ -417,9 +432,9 @@ thrust::device_ptr<float> makeEmptyDeviceVector(int size);
                                thrust::device_ptr<float> dest,
                                int length, float lambda)
   {
-    thrust::transform(x, &x[length],
+    /*thrust::transform(x, &x[length],
                       dest,
-                      soft_threshold(lambda));
+                      soft_threshold(lambda));*/
   }
 
 }
