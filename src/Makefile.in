@@ -33,7 +33,7 @@ $(CULA_OBJS): %.o: %.c
 	$(NVCC) -O3 -c $(INCS) $(CULA_INCS) $(PARAMS) $^ -o $@
 
 exec:
-	$(NVCC) -g -G -DTHRUST -O3 main.cu -o main $(LIBS)
+	$(NVCC) -g -G -DTHRUST main.cu -o main $(LIBS)
 
 clean:
 	rm -rf *.o; rm -rf *.so
