@@ -22,7 +22,6 @@ all: $(TARGETS)
 
 $(TARGETS): $(OBJS13) $(CULA_OBJS) $(OBJS)
 	$(NVCC) -O3 -shared $(LD_PARAMS) $(LIBS) $(OBJS13) $(CULA_OBJS) $(OBJS) -o $@
-	$(NVCC) -O3 main.cu -o main $(LIBS)
 
 $(OBJS): %.o: %.$(EXT)
 	$(NVCC) -O3 -c $(INCS) $(PARAMS) $^ -o $@
@@ -33,7 +32,11 @@ $(OBJS13): %.o: %.$(EXT)
 $(CULA_OBJS): %.o: %.c
 	$(NVCC) -O3 -c $(INCS) $(CULA_INCS) $(PARAMS) $^ -o $@
 
+exec:
+	$(NVCC) -g -G -DTHRUST -O3 main.cu -o main $(LIBS)
+
 clean:
 	rm -rf *.o; rm -rf *.so
+	rm main
 
 .PHONY: all clean

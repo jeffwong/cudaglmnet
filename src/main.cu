@@ -22,15 +22,11 @@ typedef struct {
 } data;
 
 typedef struct {
-    int n,p,num_lambda;
-    thrust::host_vector<float> lambda;
     thrust::device_vector<float> beta, beta_old, theta, theta_old, momentum;
 } coef;
 
 typedef struct {
     float nLL;
-    int n,p,num_lambda;
-    thrust::host_vector<float> lambda;
     thrust::device_vector<float> eta, yhat, residuals, grad, U, diff_beta, diff_theta;
 } opt;
 
@@ -38,15 +34,6 @@ typedef struct {
     int type, maxIt, reset;
     float gamma, t, thresh;
 } misc;
-
-struct absolute_value
-{
-    __host__ __device__
-        float operator()(const float& x) const { 
-            if (x < 0) return -x;
-            else return x;
-        }
-};
 
 struct square
 {
@@ -82,36 +69,19 @@ struct saxpy
         }
 };
 
-/*
-  Finds components of the grad that have absolute value > lambda
-  saves into gpu_isActive
-*/
-__global__ void checkKKT(float* gpu_grad, int* gpu_isActive, float lambda, int p)
+struct absolute_value
 {
-  int k = threadIdx.x + blockDim.x*blockIdx.x;
-  if (k < p){
-    if ((gpu_grad[k] < -lambda) || (gpu_grad[k] > lambda)) gpu_isActive[k] = 1;
-  }
-}
-
-/*
-  gpu_beta is a vector of length p
-  thresholds gpu_beta at lambda
-*/
-__global__ void softKernel(float *gpu_beta, float lambda, int p)
-{
-  int k = threadIdx.x + blockDim.x*blockIdx.x;
-  if(k < p){
-    float beta_k = gpu_beta[k];
-    if ((beta_k > -lambda) && (beta_k < lambda)) gpu_beta[k] = 0;
-    else if (beta_k > lambda) beta_k = gpu_beta[k] - lambda;
-    else if (beta_k < -lambda) beta_k = gpu_beta[k] + lambda;
-  }
-}
+    __host__ __device__
+        float operator()(const float& x) const { 
+            if (x < 0) return -x;
+            else return x;
+        }
+};
 
 
   
 extern "C"{
+
 
 void activePathSol(float*, float*, int*, int*, float*, int*,
                    int*, float*, int*, float*, float*,
@@ -154,8 +124,11 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
                      float* t, int* reset)
   { 
     //setup pointers
-    data* ddata = NULL; coef* dcoef = NULL; opt* dopt = NULL; misc* dmisc = NULL;
-
+    data* ddata = (data*)malloc(sizeof(data));
+    coef* dcoef = (coef*)malloc(sizeof(coef));
+    opt* dopt = (opt*)malloc(sizeof(opt));
+    misc* dmisc = (misc*)malloc(sizeof(misc));
+ 
     //allocate pointers, init cublas
     init(ddata, dcoef, dopt, dmisc,
          X, y, n[0], p[0], lambda, num_lambda[0],
@@ -163,7 +136,7 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
          t[0], reset[0]);
 
     //solve
-    //pathSol(ddata, dcoef, dopt, dmisc, beta);
+    pathSol(ddata, dcoef, dopt, dmisc, beta);
 
     //shutdown
     shutdown(ddata, dcoef, dopt, dmisc);
@@ -174,14 +147,10 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
             int type, float* beta, int maxIt, float thresh, float gamma,
             float t, int reset)
   {
-    int number_of_devices;
-    cudaGetDeviceCount(&number_of_devices);
-    cudaSetDevice(0);
     cublasInit();
 
     /* Set data variables */
 
-    ddata = (data*)malloc(sizeof(data));
     ddata->X = makeDeviceVector(X, n*p);
     ddata->y = makeDeviceVector(y, n);
     ddata->lambda = thrust::host_vector<float>(lambda, lambda+num_lambda);
@@ -191,27 +160,24 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
 
     /* Set coef variables */
 
-    /*dcoef = (coef*)malloc(sizeof(coef));
-    dcoef->beta = makeEmptyDeviceVector(n);
+    dcoef->beta = makeEmptyDeviceVector(p);
     dcoef->beta_old = makeEmptyDeviceVector(p);
     dcoef->theta = makeEmptyDeviceVector(p);
     dcoef->theta_old = makeEmptyDeviceVector(p);
-    dcoef->momentum = makeEmptyDeviceVector(p);*/
+    dcoef->momentum = makeEmptyDeviceVector(p);
 
     /* Set optimization variables */
 
-    /*dopt = (opt*)malloc(sizeof(opt));
     dopt->eta = makeEmptyDeviceVector(p);
     dopt->yhat = makeEmptyDeviceVector(n);
     dopt->residuals = makeEmptyDeviceVector(n);
     dopt->grad = makeEmptyDeviceVector(p);
     dopt->U = makeEmptyDeviceVector(p);
     dopt->diff_beta = makeEmptyDeviceVector(p);
-    dopt->diff_theta = makeEmptyDeviceVector(p);*/
+    dopt->diff_theta = makeEmptyDeviceVector(p);
 
     /* Set misc variables */
 
-    dmisc = (misc*)malloc(sizeof(misc));
     dmisc->type = type;
     dmisc->maxIt = maxIt;
     dmisc->gamma = gamma;
@@ -222,14 +188,14 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
 
   void pathSol(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, float* beta)
   {
-    int j;
+    int j = 0;
     for (j=0; j < ddata->num_lambda; j++){
       dcoef->beta_old = dcoef->beta;
       dcoef->theta_old = dcoef->theta;
       singleSolve(ddata, dcoef, dopt, dmisc, j);
 
       int startIndex = j*ddata->p;
-      int i;
+      int i = 0;
       for(i=0; i < ddata->p; i++){
         beta[startIndex+i] = dcoef->beta[i];
       }
@@ -239,6 +205,7 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
   void singleSolve(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j)
   {
     int iter = 0;
+    checkCrit(ddata, dcoef, dopt, dmisc, j, iter);
     while (checkCrit(ddata, dcoef, dopt, dmisc, j, iter) == 0)
     {
       calcNegLL(ddata, dcoef, dopt, dmisc, dcoef->beta, j);
@@ -349,17 +316,15 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
 
   int checkCrit(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j, int iter)
   {
-    absolute_value unary_op;
-    thrust::maximum<float> binary_op;
     float move = thrust::transform_reduce(dopt->diff_beta.begin(), dopt->diff_beta.end(),
-                                          unary_op, 0, binary_op);
+                                          absolute_value(), 0, thrust::maximum<float>());
       
-    return (iter > dmisc->maxIt) || (move < dmisc->thresh);
+    return (int)((iter > dmisc->maxIt) || (move < dmisc->thresh));
   }
 
   void shutdown(data* ddata, coef* dcoef, opt* dopt, misc* dmisc)
   {
-    free(ddata); free(dcoef); free(dopt); free(dmisc);
+    //free(ddata); free(dcoef); free(dopt); free(dmisc);
     cublasShutdown();
   }
 
@@ -374,7 +339,7 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
 
   thrust::device_vector<float> makeEmptyDeviceVector(int size)
   {
-    thrust::host_vector<float> x(size,0);
+    thrust::host_vector<float> x(size, 0);
     thrust::device_vector<float> dx = x;
     return dx;
   }
