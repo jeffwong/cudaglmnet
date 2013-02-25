@@ -2,17 +2,16 @@
 #include <stdio.h>
 #include <cublas.h>
 #include <cuda.h>
+#include <cmath>
 #include <iostream>
 
 #include <thrust/host_vector.h>
 #include <thrust/device_vector.h>
 #include <thrust/device_ptr.h>
-#include <thrust/iterator/zip_iterator.h>
+#include <thrust/functional.h>
+#include <thrust/transform_reduce.h>
 #include <thrust/copy.h>
 #include <thrust/fill.h>
-#include <thrust/transform_reduce.h>
-#include <thrust/functional.h>
-#include <thrust/inner_product.h>
 #define index(i,j,ld) (((j)*(ld))+(i))
 
 typedef struct {
@@ -73,7 +72,7 @@ struct absolute_value
 {
     __host__ __device__
         float operator()(const float& x) const { 
-            if (x < 0) return -x;
+            if (x < 0) return (-1*x);
             else return x;
         }
 };
@@ -100,6 +99,9 @@ int checkStep(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j);
 int checkCrit(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j, int iter);
 void shutdown(data* ddata, coef* dcoef, opt* dopt, misc* dmisc);
 float device_vector2Norm(thrust::device_vector<float> x);
+float device_vectorDot(thrust::device_vector<float> x,
+                       thrust::device_vector<float> y);
+float device_vectorMaxNorm(thrust::device_vector<float> x);
 void device_vectorSoftThreshold(thrust::device_vector<float> x, thrust::device_vector<float>, float lambda);
 void device_vectorSgemv(thrust::device_vector<float> A,
                           thrust::device_vector<float> x,
@@ -205,7 +207,6 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
   void singleSolve(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j)
   {
     int iter = 0;
-    checkCrit(ddata, dcoef, dopt, dmisc, j, iter);
     while (checkCrit(ddata, dcoef, dopt, dmisc, j, iter) == 0)
     {
       calcNegLL(ddata, dcoef, dopt, dmisc, dcoef->beta, j);
@@ -226,11 +227,13 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
     {
       case 0:  //normal
       {
-        dopt->nLL = 0.5 * device_vector2Norm(dopt->residuals); break;
+        dopt->nLL = 0.5 * device_vector2Norm(dopt->residuals);
+        break;
       }
       default:  //default to normal
       { 
-        dopt->nLL = 0.5 * device_vector2Norm(dopt->residuals); break;
+        dopt->nLL = 0.5 * device_vector2Norm(dopt->residuals);
+        break;
       }
     }
     return dopt->nLL;
@@ -303,9 +306,7 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
   {
     float nLL = calcNegLL(ddata, dcoef, dopt, dmisc, dcoef->theta, j);
     //iprod is the dot product of diff and grad
-    float iprod = thrust::inner_product(dopt->diff_theta.begin(), dopt->diff_theta.end(),
-                                        dopt->grad.begin(),
-                                        0); 
+    float iprod = device_vectorDot(dopt->diff_theta, dopt->grad);
     float sumSquareDiff = device_vector2Norm(dopt->diff_theta);
 
     int check = (int)(nLL < (dopt->nLL + iprod + sumSquareDiff) / (2 * dmisc->t));
@@ -316,10 +317,11 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
 
   int checkCrit(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j, int iter)
   {
-    float move = thrust::transform_reduce(dopt->diff_beta.begin(), dopt->diff_beta.end(),
-                                          absolute_value(), 0, thrust::maximum<float>());
-      
-    return (int)((iter > dmisc->maxIt) || (move < dmisc->thresh));
+    if (iter > dmisc->maxIt) return 1;
+    else return 0;
+    /*float move = device_vectorMaxNorm(dopt->diff_theta);  
+    if ((iter > dmisc->maxIt) || (move < dmisc->thresh)) return 1;
+    else return 0;*/
   }
 
   void shutdown(data* ddata, coef* dcoef, opt* dopt, misc* dmisc)
@@ -344,13 +346,24 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
     return dx;
   }
 
+  // ||x||_max
+  float device_vectorMaxNorm(thrust::device_vector<float> x)
+  {
+    return thrust::transform_reduce(x.begin(), x.end(),
+                                    absolute_value(), 0.0, thrust::maximum<float>());  
+  }
 
   // ||x||_2^2
   float device_vector2Norm(thrust::device_vector<float> x)
   {  
-    square unary_op;
-    thrust::plus<float> binary_op;
-    return thrust::transform_reduce(x.begin(), x.end(), unary_op, 0, binary_op);
+    return cublasSnrm2(x.size(), thrust::raw_pointer_cast(&x[0]), 1);
+  }
+
+  float device_vectorDot(thrust::device_vector<float> x,
+                         thrust::device_vector<float> y)
+  {  
+    return cublasSdot(x.size(), thrust::raw_pointer_cast(&x[0]), 1,
+                      thrust::raw_pointer_cast(&y[0]), 1);
   }
 
   // b = X^T y
