@@ -10,23 +10,21 @@
 #include <thrust/device_ptr.h>
 #include <thrust/functional.h>
 #include <thrust/transform_reduce.h>
-#include <thrust/copy.h>
-#include <thrust/fill.h>
 #define index(i,j,ld) (((j)*(ld))+(i))
 
 typedef struct {
     int n,p,num_lambda;
     thrust::host_vector<float> lambda;
-    thrust::device_vector<float> X, y;
+    thrust::device_ptr<float> X, y;
 } data;
 
 typedef struct {
-    thrust::device_vector<float> beta, beta_old, theta, theta_old, momentum;
+    thrust::device_ptr<float> beta, beta_old, theta, theta_old, momentum;
 } coef;
 
 typedef struct {
     float nLL;
-    thrust::device_vector<float> eta, yhat, residuals, grad, U, diff_beta, diff_theta;
+    thrust::device_ptr<float> eta, yhat, residuals, grad, U, diff_beta, diff_theta;
 } opt;
 
 typedef struct {
@@ -91,28 +89,29 @@ void init(data*, coef*, opt*, misc*,
           float, int);
 void pathSol(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, float* beta);
 void singleSolve(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j);
-float calcNegLL(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, thrust::device_vector<float> pvector, int j);
+float calcNegLL(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, thrust::device_ptr<float> pvector, int j);
 void gradStep(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j);
 void proxCalc(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j);
 void nestStep(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j, int iter);
 int checkStep(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j);
 int checkCrit(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j, int iter);
 void shutdown(data* ddata, coef* dcoef, opt* dopt, misc* dmisc);
-float device_vector2Norm(thrust::device_vector<float> x);
-float device_vectorDot(thrust::device_vector<float> x,
-                       thrust::device_vector<float> y);
-float device_vectorMaxNorm(thrust::device_vector<float> x);
-void device_vectorSoftThreshold(thrust::device_vector<float> x, thrust::device_vector<float>, float lambda);
-void device_vectorSgemv(thrust::device_vector<float> A,
-                          thrust::device_vector<float> x,
-                          thrust::device_vector<float> b,
+float device_ptr2Norm(thrust::device_ptr<float> x, int length);
+float device_ptrDot(thrust::device_ptr<float> x,
+                    thrust::device_ptr<float> y,
+                    int length);
+float device_ptrMaxNorm(thrust::device_ptr<float> x, int length);
+void device_ptrSoftThreshold(thrust::device_ptr<float> x, thrust::device_ptr<float>, int length, float lambda);
+void device_ptrSgemv(thrust::device_ptr<float> A,
+                     thrust::device_ptr<float> x,
+                     thrust::device_ptr<float> b,
                           int n, int p);
-void device_vectorCrossProd(thrust::device_vector<float> X,
-                              thrust::device_vector<float> y,
-                              thrust::device_vector<float> b,
-                              int n, int p);
-thrust::device_vector<float> makeDeviceVector(float* x, int size);
-thrust::device_vector<float> makeEmptyDeviceVector(int size);
+void device_ptrCrossProd(thrust::device_ptr<float> X,
+                         thrust::device_ptr<float> y,
+                         thrust::device_ptr<float> b,
+                         int n, int p);
+thrust::device_ptr<float> makeDeviceVector(float* x, int size);
+thrust::device_ptr<float> makeEmptyDeviceVector(int size);
  
 
 
@@ -194,12 +193,15 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
     for (j=0; j < ddata->num_lambda; j++){
       dcoef->beta_old = dcoef->beta;
       dcoef->theta_old = dcoef->theta;
+      
       singleSolve(ddata, dcoef, dopt, dmisc, j);
 
+      thrust::device_vector<float> dbeta(dcoef->beta, &dcoef->beta[ddata->p]);
+      thrust::host_vector<float> hbeta = dbeta;
       int startIndex = j*ddata->p;
       int i = 0;
       for(i=0; i < ddata->p; i++){
-        beta[startIndex+i] = dcoef->beta[i];
+        beta[startIndex+i] = hbeta[i];
       }
     }
   }
@@ -220,19 +222,19 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
   }
 
   float calcNegLL(data* ddata, coef* dcoef, opt* dopt, misc* dmisc,
-                  thrust::device_vector<float> pvector, int j)
+                  thrust::device_ptr<float> pvector, int j)
   {
-    device_vectorSgemv(ddata->X, pvector, dopt->eta, ddata->n, ddata->p);
+    device_ptrSgemv(ddata->X, pvector, dopt->eta, ddata->n, ddata->p);
     switch (dmisc->type)
     {
       case 0:  //normal
       {
-        dopt->nLL = 0.5 * device_vector2Norm(dopt->residuals);
+        dopt->nLL = 0.5 * device_ptr2Norm(dopt->residuals, ddata->n);
         break;
       }
       default:  //default to normal
       { 
-        dopt->nLL = 0.5 * device_vector2Norm(dopt->residuals);
+        dopt->nLL = 0.5 * device_ptr2Norm(dopt->residuals, ddata->n);
         break;
       }
     }
@@ -246,18 +248,23 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
       case 0:  //normal
       {
         //yhat = XB
-        device_vectorSgemv(ddata->X, dcoef->beta, dopt->yhat, ddata->n, ddata->p);
+        device_ptrSgemv(ddata->X, dcoef->beta,
+                        dopt->yhat,
+                        ddata->n, ddata->p);
         //residuals = y - yhat
-        thrust::transform(ddata->y.begin(), ddata->y.end(),
-                          dopt->yhat.begin(),
-                          dopt->residuals.begin(),
+        printf("grad step transform");
+        thrust::transform(ddata->y, &ddata->y[ddata->n],
+                          dopt->yhat,
+                          dopt->residuals,
                           thrust::minus<float>());
         //grad = X^T residuals
-        device_vectorCrossProd(ddata->X, dopt->residuals, dopt->grad, ddata->n, ddata->p);
+        device_ptrCrossProd(ddata->X, dopt->residuals,
+                            dopt->grad,
+                            ddata->n, ddata->p);
         //U = -t * grad + beta
-        thrust::transform(dopt->grad.begin(), dopt->grad.end(),
-                          dcoef->beta.begin(),
-                          dopt->U.begin(),
+        thrust::transform(dopt->grad, &dopt->grad[ddata->p],
+                          dcoef->beta,
+                          dopt->U,
                           saxpy(-dmisc->t));
         proxCalc(ddata, dcoef, dopt, dmisc, j);
         break;
@@ -275,7 +282,9 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
     {
       case 0:  //normal
       {
-        device_vectorSoftThreshold(dopt->U, dcoef->theta, ddata->lambda[j] * dmisc->t);
+        device_ptrSoftThreshold(dopt->U,
+                                dcoef->theta,
+                                ddata->p, ddata->lambda[j] * dmisc->t);
         break;
       }
       default:
@@ -289,27 +298,27 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
   {
     dcoef->beta_old = dcoef->beta;
     //momentum = theta - theta old
-    thrust::transform(dcoef->theta.begin(), dcoef->theta.end(),
-                      dcoef->theta_old.begin(),
-                      dcoef->momentum.begin(),
+    /*thrust::transform(dcoef->theta, &dcoef->theta[ddata->p],
+                      dcoef->theta_old,
+                      dcoef->momentum,
                       thrust::minus<float>());
-    float scale = (float) (iter % dmisc->reset) / (iter % dmisc->reset + 3);
+    */float scale = (float) (iter % dmisc->reset) / (iter % dmisc->reset + 3);
     //beta = theta + scale*momentum
-    thrust::transform(dcoef->momentum.begin(), dcoef->momentum.end(),
-                      dcoef->theta.begin(),
-                      dcoef->beta.begin(),
+    /*thrust::transform(dcoef->momentum, &dcoef->momentum[ddata->p],
+                      dcoef->theta,
+                      dcoef->beta,
                       saxpy(scale));
-    dcoef->theta_old = dcoef->theta;
+    */dcoef->theta_old = dcoef->theta;
   }
 
   int checkStep(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j)
   {
     float nLL = calcNegLL(ddata, dcoef, dopt, dmisc, dcoef->theta, j);
     //iprod is the dot product of diff and grad
-    float iprod = device_vectorDot(dopt->diff_theta, dopt->grad);
-    float sumSquareDiff = device_vector2Norm(dopt->diff_theta);
+    float iprod = device_ptrDot(dopt->diff_theta, dopt->grad, ddata->p);
+    float sumSquareDiff = device_ptr2Norm(dopt->diff_theta, ddata->p);
 
-    int check = (int)(nLL < (dopt->nLL + iprod + sumSquareDiff) / (2 * dmisc->t));
+    int check = (int)(nLL < ((dopt->nLL + iprod + sumSquareDiff) / (2 * dmisc->t)));
     if (check == 0) dmisc->t = dmisc->t * dmisc->gamma;
       
     return check;
@@ -319,14 +328,14 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
   {
     if (iter > dmisc->maxIt) return 1;
     else return 0;
-    /*float move = device_vectorMaxNorm(dopt->diff_theta);  
+    /*float move = device_ptrMaxNorm(dopt->diff_theta, ddata->p);  
     if ((iter > dmisc->maxIt) || (move < dmisc->thresh)) return 1;
     else return 0;*/
   }
 
   void shutdown(data* ddata, coef* dcoef, opt* dopt, misc* dmisc)
   {
-    //free(ddata); free(dcoef); free(dopt); free(dmisc);
+    free(ddata); free(dcoef); free(dopt); free(dmisc);
     cublasShutdown();
   }
 
@@ -334,68 +343,83 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
     MISC MATH FUNCTIONS
   */
 
-  thrust::device_vector<float> makeDeviceVector(float* x, int size)
+  thrust::device_ptr<float> makeDeviceVector(float* x, int size)
   {
-    return thrust::device_vector<float> (x, x+size);
+    thrust::device_vector<float> dx(x, x+size);
+    return &dx[0];
   }
 
-  thrust::device_vector<float> makeEmptyDeviceVector(int size)
+  thrust::device_ptr<float> makeEmptyDeviceVector(int size)
   {
     thrust::host_vector<float> x(size, 0);
     thrust::device_vector<float> dx = x;
-    return dx;
+    return &dx[0];
   }
 
   // ||x||_max
-  float device_vectorMaxNorm(thrust::device_vector<float> x)
+  float device_ptrMaxNorm(thrust::device_ptr<float> x, int length)
   {
-    return thrust::transform_reduce(x.begin(), x.end(),
+    return thrust::transform_reduce(x, &x[length],
                                     absolute_value(), 0.0, thrust::maximum<float>());  
   }
 
   // ||x||_2^2
-  float device_vector2Norm(thrust::device_vector<float> x)
+  float device_ptr2Norm(thrust::device_ptr<float> x, int length)
   {  
-    return cublasSnrm2(x.size(), thrust::raw_pointer_cast(&x[0]), 1);
+    return cublasSnrm2(length, thrust::raw_pointer_cast(x), 1);
   }
 
-  float device_vectorDot(thrust::device_vector<float> x,
-                         thrust::device_vector<float> y)
+  // y = ax + y
+  void device_ptrSaxpy(thrust::device_ptr<float> x,
+                       thrust::device_ptr<float> y,
+                       int length,float scale)
+  {
+    cublasSaxpy(length, scale, 
+                thrust::raw_pointer_cast(x), 1,
+                thrust::raw_pointer_cast(y), 1);
+  }
+
+  // <x,y>
+  float device_ptrDot(thrust::device_ptr<float> x,
+                      thrust::device_ptr<float> y,
+                      int length)
   {  
-    return cublasSdot(x.size(), thrust::raw_pointer_cast(&x[0]), 1,
-                      thrust::raw_pointer_cast(&y[0]), 1);
+    return cublasSdot(length, thrust::raw_pointer_cast(x), 1,
+                      thrust::raw_pointer_cast(y), 1);
   }
 
   // b = X^T y
-  void device_vectorCrossProd(thrust::device_vector<float> X,
-                              thrust::device_vector<float> y,
-                              thrust::device_vector<float> b,
-                              int n, int p)
+  void device_ptrCrossProd(thrust::device_ptr<float> X,
+                           thrust::device_ptr<float> y,
+                           thrust::device_ptr<float> b,
+                           int n, int p)
   {
     cublasSgemv('t', n, p, 1,
-                thrust::raw_pointer_cast(&X[0]), n,
-                thrust::raw_pointer_cast(&y[0]), 1,
-                0, thrust::raw_pointer_cast(&b[0]), 1); 
+                thrust::raw_pointer_cast(X), n,
+                thrust::raw_pointer_cast(y), 1,
+                0, thrust::raw_pointer_cast(b), 1); 
   }
 
   // b = Ax
-  void device_vectorSgemv(thrust::device_vector<float> A,
-                          thrust::device_vector<float> x,
-                          thrust::device_vector<float> b,
-                          int n, int p)
+  void device_ptrSgemv(thrust::device_ptr<float> A,
+                       thrust::device_ptr<float> x,
+                       thrust::device_ptr<float> b,
+                       int n, int p)
   {
     cublasSgemv('n', n, p, 1,
-                thrust::raw_pointer_cast(&A[0]), n,
-                thrust::raw_pointer_cast(&x[0]), 1,
-                0, thrust::raw_pointer_cast(&b[0]), 1);
+                thrust::raw_pointer_cast(A), n,
+                thrust::raw_pointer_cast(x), 1,
+                0, thrust::raw_pointer_cast(b), 1);
   }
 
   // S(x, lambda)
-  void device_vectorSoftThreshold(thrust::device_vector<float> x,
-                                  thrust::device_vector<float> dest,
-                                  float lambda)
+  void device_ptrSoftThreshold(thrust::device_ptr<float> x,
+                               thrust::device_ptr<float> dest,
+                               int length, float lambda)
   {
-    thrust::transform(x.begin(), x.end(), dest.begin(), soft_threshold(lambda));
+    thrust::transform(x, &x[length],
+                      dest,
+                      soft_threshold(lambda));
   }
 
 }
