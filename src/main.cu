@@ -11,7 +11,6 @@
 #include <thrust/transform.h>
 #include <thrust/reduce.h>
 #include <thrust/copy.h>
-#include <thrust/fill.h>
 
 typedef struct {
     int n,p,num_lambda;
