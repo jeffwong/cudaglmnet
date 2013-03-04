@@ -219,18 +219,29 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
                    cublasStatus_t stat, cublasHandle_t handle)
   {
     int iter = 0;
-    while (checkCrit(ddata, dcoef, dopt, dmisc, j, iter, stat, handle) == 0)
+    do
     {
+      printf("calcNegLL\n");
       calcNegLL(ddata, dcoef, dopt, dmisc, dcoef->beta, j, stat, handle);
-      //while (checkStep(ddata, dcoef, dopt, dmisc, j, stat, handle) == 0)
-      //{
+      do
+      {
+        printf("gradStep\n");
         gradStep(ddata, dcoef, dopt, dmisc, j, stat, handle);
-      //}
-      //memory bug in nestStep?
-      //Program hit error 8 on CUDA API call to cudaFuncGetAttributes
-      //nestStep(ddata, dcoef, dopt, dmisc, j, iter, stat, handle);
+        printf("checkStep\n");
+      } while (checkStep(ddata, dcoef, dopt, dmisc, j, stat, handle) == 0);
+      printf("nestStep\n");
+      nestStep(ddata, dcoef, dopt, dmisc, j, iter, stat, handle);
       iter = iter + 1;
-    }
+      printf("checkCrit");
+    } while (checkCrit(ddata, dcoef, dopt, dmisc, j, iter, stat, handle));
+  }
+
+  int checkCrit(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j, int iter,
+                cublasStatus_t stat, cublasHandle_t handle)
+  {
+    float move = device_vectorMaxNorm(dopt->diff_theta);  
+    if ((iter > dmisc->maxIt) || (move < dmisc->thresh)) return 0;
+    else return 1;
   }
 
   float calcNegLL(data* ddata, coef* dcoef, opt* dopt, misc* dmisc,
@@ -256,6 +267,20 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
       }
     }
     return dopt->nLL;
+  }
+
+  int checkStep(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j,
+                cublasStatus_t stat, cublasHandle_t handle)
+  {
+    float nLL = calcNegLL(ddata, dcoef, dopt, dmisc, dcoef->theta, j, stat, handle);
+    
+    //iprod is the dot product of diff and grad
+    float iprod=0; device_vectorDot(dopt->diff_theta, dopt->grad, &iprod, stat, handle);
+    float sumSquareDiff=0; device_vector2Norm(dopt->diff_theta, &sumSquareDiff, stat, handle);
+
+    int check = (int)(nLL < (dopt->nLL + iprod + sumSquareDiff) / (2 * dmisc->t));
+    if (check == 0) dmisc->t = dmisc->t * dmisc->gamma;
+    return check;
   }
 
   void gradStep(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j,
@@ -323,32 +348,6 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
                       dcoef->beta.begin(),
                       saxpy(scale));
     dcoef->theta_old = dcoef->theta;
-  }
-
-  int checkStep(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j,
-                cublasStatus_t stat, cublasHandle_t handle)
-  {
-    float nLL = calcNegLL(ddata, dcoef, dopt, dmisc, dcoef->theta, j, stat, handle);
-    printf("checkStep nll %f\n", nLL);
-    //iprod is the dot product of diff and grad
-
-    float iprod=0; device_vectorDot(dopt->diff_theta, dopt->grad, &iprod, stat, handle);
-    float sumSquareDiff=0; device_vector2Norm(dopt->diff_theta, &sumSquareDiff, stat, handle);
-
-    int check = (int)(nLL < (dopt->nLL + iprod + sumSquareDiff) / (2 * dmisc->t));
-    if (check == 0) dmisc->t = dmisc->t * dmisc->gamma;
-    printf("checkStep check %i\n", check);  
-    return check;
-  }
-
-  int checkCrit(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j, int iter,
-                cublasStatus_t stat, cublasHandle_t handle)
-  {
-    if (iter > dmisc->maxIt) return 1;
-    else return 0;
-    /*float move = device_vectorMaxNorm(dopt->diff_theta);  
-    if ((iter > dmisc->maxIt) || (move < dmisc->thresh)) return 1;
-    else return 0;*/
   }
 
   void shutdown(data* ddata, coef* dcoef, opt* dopt, misc* dmisc)
@@ -436,17 +435,17 @@ int main() {
   int* p = (int*)malloc(sizeof(int)); p[0] = 10;
  
   thrust::host_vector<float> X(n[0]*p[0],1);
-  thrust::host_vector<float> y(n[0]*p[0],1);
+  thrust::host_vector<float> y(n[0],1);
   thrust::host_vector<float> beta(p[0],1);
 
   int* num_lambda = (int*)malloc(sizeof(int)); num_lambda[0] = 1;
   int* type = (int*)malloc(sizeof(int)); type[0] = 0;
   int* maxIt = (int*)malloc(sizeof(int)); maxIt[0] = 10;
-  int* reset = (int*)malloc(sizeof(int)); reset[0] = 10;
+  int* reset = (int*)malloc(sizeof(int)); reset[0] = 5;
   float* lambda = (float*)malloc(sizeof(float) * num_lambda[0]); lambda[0] = 1;
-  float* thresh = (float*)malloc(sizeof(float)); thresh[0] = 1;
-  float* gamma = (float*)malloc(sizeof(float)); gamma[0] = 1;
-  float* t = (float*)malloc(sizeof(float)); t[0] = 1;
+  float* thresh = (float*)malloc(sizeof(float)); thresh[0] = 0.0001;
+  float* gamma = (float*)malloc(sizeof(float)); gamma[0] = 0.0001;
+  float* t = (float*)malloc(sizeof(float)); t[0] = 0.0001;
 
   activePathSol(thrust::raw_pointer_cast(&X[0]),
                 thrust::raw_pointer_cast(&y[0]),
