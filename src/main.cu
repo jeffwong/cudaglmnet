@@ -207,11 +207,8 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
       dcoef->theta_old = dcoef->theta;
       singleSolve(ddata, dcoef, dopt, dmisc, j, stat, handle);
 
-      /*int startIndex = j*ddata->p;
-      int i = 0;
-      for(i=0; i < ddata->p; i++){
-        beta[startIndex+i] = dcoef->beta[i];
-      }*/
+      int startIndex = j*ddata->p;
+      thrust::copy(dcoef->beta.begin(), dcoef->beta.end(), beta + startIndex);
     }
   }
 
@@ -433,12 +430,12 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
 int main() {
   int* n = (int*)malloc(sizeof(int)); n[0] = 100;
   int* p = (int*)malloc(sizeof(int)); p[0] = 10;
+  int* num_lambda = (int*)malloc(sizeof(int)); num_lambda[0] = 1;
  
   thrust::host_vector<float> X(n[0]*p[0],1);
   thrust::host_vector<float> y(n[0],1);
-  thrust::host_vector<float> beta(p[0],1);
+  thrust::host_vector<float> beta(p[0] * num_lambda[0],1);
 
-  int* num_lambda = (int*)malloc(sizeof(int)); num_lambda[0] = 1;
   int* type = (int*)malloc(sizeof(int)); type[0] = 0;
   int* maxIt = (int*)malloc(sizeof(int)); maxIt[0] = 10;
   int* reset = (int*)malloc(sizeof(int)); reset[0] = 5;
@@ -453,8 +450,8 @@ int main() {
                 type, thrust::raw_pointer_cast(&beta[0]), maxIt, thresh, gamma,
                 t, reset);
   
-  free(n); free(p); 
-  free(num_lambda); free(type); free(maxIt); free(reset);
+  free(n); free(p); free(num_lambda);
+  free(type); free(maxIt); free(reset);
   free(lambda); free(thresh); free(gamma); free(t);
   return 0;
 }
