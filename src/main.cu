@@ -323,6 +323,7 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
       }
       default:
       {
+        device_vectorSoftThreshold(dopt->U, dcoef->theta, ddata->lambda[j] * dmisc->t);
         break;
       }
     }
@@ -362,9 +363,7 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
 
   thrust::device_vector<float> makeEmptyDeviceVector(int size)
   {
-    thrust::host_vector<float> x(size, 0);
-    thrust::device_vector<float> dx = x;
-    return dx;
+    return thrust::device_vector<float> (size, 0);
   }
 
   // ||x||_max
@@ -375,14 +374,15 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
   }
 
   // ||x||_2^2
-  void device_vector2Norm(thrust::device_vector<float> x, float* result, cublasStatus_t stat, cublasHandle_t handle)
+  void device_vector2Norm(thrust::device_vector<float> x, float* result,
+                          cublasStatus_t stat, cublasHandle_t handle)
   {  
     cublasSnrm2(handle, x.size(), thrust::raw_pointer_cast(&x[0]), 1, result);
   }
 
   void device_vectorDot(thrust::device_vector<float> x, thrust::device_vector<float> y,
-                         float* result,
-                         cublasStatus_t stat, cublasHandle_t handle)
+                        float* result,
+                        cublasStatus_t stat, cublasHandle_t handle)
   {  
     cublasSdot(handle, x.size(), thrust::raw_pointer_cast(&x[0]), 1,
                thrust::raw_pointer_cast(&y[0]), 1, result);
@@ -440,8 +440,8 @@ int main() {
   int* reset = (int*)malloc(sizeof(int)); reset[0] = 5;
   float* lambda = (float*)malloc(sizeof(float) * num_lambda[0]); lambda[0] = 1;
   float* thresh = (float*)malloc(sizeof(float)); thresh[0] = 0.0001;
-  float* gamma = (float*)malloc(sizeof(float)); gamma[0] = 0.0001;
-  float* t = (float*)malloc(sizeof(float)); t[0] = 0.0001;
+  float* gamma = (float*)malloc(sizeof(float)); gamma[0] = 0.5;
+  float* t = (float*)malloc(sizeof(float)); t[0] = 0.01;
 
   activePathSol(thrust::raw_pointer_cast(&X[0]),
                 thrust::raw_pointer_cast(&y[0]),
