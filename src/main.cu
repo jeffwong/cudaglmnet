@@ -15,16 +15,16 @@
 typedef struct {
     int n,p,num_lambda;
     thrust::host_vector<float> lambda;
-    thrust::device_vector<float> X, y;
+    thrust::device_ptr<float> X, y;
 } data;
 
 typedef struct {
-    thrust::device_vector<float> beta, beta_old, theta, theta_old, momentum;
+    thrust::device_ptr<float> beta, beta_old, theta, theta_old, momentum;
 } coef;
 
 typedef struct {
     float nLL;
-    thrust::device_vector<float> eta, yhat, residuals, grad, U, diff_beta, diff_theta;
+    thrust::device_ptr<float> eta, yhat, residuals, grad, U, diff_beta, diff_theta;
 } opt;
 
 typedef struct {
@@ -89,31 +89,34 @@ void init(data*, coef*, opt*, misc*,
           float, int);
 void pathSol(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, float* beta,cublasStatus_t stat, cublasHandle_t handle );
 void singleSolve(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j,cublasStatus_t stat, cublasHandle_t handle );
-float calcNegLL(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, thrust::device_vector<float> pvector, int j,cublasStatus_t stat, cublasHandle_t handle );
+float calcNegLL(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, thrust::device_ptr<float> pvector, int j,cublasStatus_t stat, cublasHandle_t handle );
 void gradStep(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j,cublasStatus_t stat, cublasHandle_t handle );
 void proxCalc(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j,cublasStatus_t stat, cublasHandle_t handle );
 void nestStep(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j, int iter,cublasStatus_t stat, cublasHandle_t handle );
 int checkStep(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j,cublasStatus_t stat, cublasHandle_t handle );
 int checkCrit(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j, int iter,cublasStatus_t stat, cublasHandle_t handle );
 void shutdown(data* ddata, coef* dcoef, opt* dopt, misc* dmisc);
-void device_vector2Norm(thrust::device_vector<float> x, float* result, cublasStatus_t stat, cublasHandle_t handle );
-void device_vectorDot(thrust::device_vector<float> x, thrust::device_vector<float> y,
-                      float* result, cublasStatus_t stat, cublasHandle_t handle );
-float device_vectorMaxNorm(thrust::device_vector<float> x);
-void device_vectorSoftThreshold(thrust::device_vector<float> x, thrust::device_vector<float>, float lambda);
-void device_vectorSgemv(thrust::device_vector<float> A,
-                          thrust::device_vector<float> x,
-                          thrust::device_vector<float> b,
+void device_ptr2Norm(thrust::device_ptr<float> x, float* result, int size, cublasStatus_t stat, cublasHandle_t handle );
+void device_ptrDot(thrust::device_ptr<float> x, thrust::device_ptr<float> y,
+                   float* result, int size, cublasStatus_t stat, cublasHandle_t handle );
+float device_ptrMaxNorm(thrust::device_ptr<float> x, int size);
+void device_ptrSoftThreshold(thrust::device_ptr<float> x, thrust::device_ptr<float>, float lambda, int size);
+void device_ptrSgemv(thrust::device_ptr<float> A,
+                          thrust::device_ptr<float> x,
+                          thrust::device_ptr<float> b,
                           int n, int p,
                           cublasStatus_t stat, cublasHandle_t handle );
-void device_vectorCrossProd(thrust::device_vector<float> X,
-                              thrust::device_vector<float> y,
-                              thrust::device_vector<float> b,
+void device_ptrCrossProd(thrust::device_ptr<float> X,
+                              thrust::device_ptr<float> y,
+                              thrust::device_ptr<float> b,
                               int n, int p,
                             cublasStatus_t stat, cublasHandle_t handle) ;
-thrust::device_vector<float> makeDeviceVector(float* x, int size);
-thrust::device_vector<float> makeEmptyDeviceVector(int size);
- 
+thrust::device_ptr<float> makeDeviceVector(float* x, int size);
+thrust::device_ptr<float> makeEmptyDeviceVector(int size);
+void device_ptrCopy(thrust::device_ptr<float> from,
+                    thrust::device_ptr<float> to,
+                    int size);
+
 
 
   /*
@@ -133,9 +136,9 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
 
     //allocate pointers
     init(ddata, dcoef, dopt, dmisc,
-         X, y, n[0], p[0], lambda, num_lambda[0],
-         type[0], beta, maxIt[0], thresh[0], gamma[0],
-         t[0], reset[0]);
+         X, y, *n, *p, lambda, *num_lambda,
+         *type, beta, *maxIt, *thresh, *gamma,
+         *t, *reset);
    
     //Set cublas variables
     cublasStatus_t stat;
@@ -143,11 +146,12 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
     stat = cublasCreate(&handle);
     if (stat != CUBLAS_STATUS_SUCCESS) {
       printf ("CUBLAS initialization failed\n");
+      cublasDestroy(handle);
       return;
     }
  
     //solve
-    pathSol(ddata, dcoef, dopt, dmisc, beta, stat, handle);
+    //pathSol(ddata, dcoef, dopt, dmisc, beta, stat, handle);
 
     //shutdown
     shutdown(ddata, dcoef, dopt, dmisc);
@@ -201,12 +205,12 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
   {
     int j = 0;
     for (j=0; j < ddata->num_lambda; j++){
-      dcoef->beta_old = dcoef->beta;
-      dcoef->theta_old = dcoef->theta;
-      singleSolve(ddata, dcoef, dopt, dmisc, j, stat, handle);
+      device_ptrCopy(dcoef->beta, dcoef->beta_old, ddata->p);
+      device_ptrCopy(dcoef->theta, dcoef->theta_old, ddata->p);
+      //singleSolve(ddata, dcoef, dopt, dmisc, j, stat, handle);
 
       int startIndex = j*ddata->p;
-      thrust::copy(dcoef->beta.begin(), dcoef->beta.end(), beta + startIndex);
+      //thrust::copy(dcoef->beta, dcoef->beta + ddata->p, beta + startIndex);
     }
   }
 
@@ -217,15 +221,15 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
     do
     {
       printf("calcNegLL\n");
-      calcNegLL(ddata, dcoef, dopt, dmisc, dcoef->beta, j, stat, handle);
-      do
+      //calcNegLL(ddata, dcoef, dopt, dmisc, dcoef->beta, j, stat, handle);
+      /*do
       {
         printf("gradStep\n");
         gradStep(ddata, dcoef, dopt, dmisc, j, stat, handle);
         printf("checkStep\n");
       } while (checkStep(ddata, dcoef, dopt, dmisc, j, stat, handle) == 0);
       printf("nestStep\n");
-      nestStep(ddata, dcoef, dopt, dmisc, j, iter, stat, handle);
+      nestStep(ddata, dcoef, dopt, dmisc, j, iter, stat, handle);*/
       iter = iter + 1;
       printf("checkCrit");
     } while (checkCrit(ddata, dcoef, dopt, dmisc, j, iter, stat, handle));
@@ -234,29 +238,30 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
   int checkCrit(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j, int iter,
                 cublasStatus_t stat, cublasHandle_t handle)
   {
-    float move = device_vectorMaxNorm(dopt->diff_theta);  
+    float move = 1;
+    //device_ptrMaxNorm(dopt->diff_theta, ddata->p);  
     if ((iter > dmisc->maxIt) || (move < dmisc->thresh)) return 0;
     else return 1;
   }
 
   float calcNegLL(data* ddata, coef* dcoef, opt* dopt, misc* dmisc,
-                  thrust::device_vector<float> pvector, int j,
+                  thrust::device_ptr<float> pvector, int j,
                   cublasStatus_t stat, cublasHandle_t handle)
   {
-    device_vectorSgemv(ddata->X, pvector, dopt->eta, ddata->n, ddata->p, stat, handle);
+    device_ptrSgemv(ddata->X, pvector, dopt->eta, ddata->n, ddata->p, stat, handle);
     switch (dmisc->type)
     {
       case 0:  //normal
       {
         float nll = 0;
-        device_vector2Norm(dopt->residuals, &nll, stat, handle);
+        device_ptr2Norm(dopt->residuals, &nll, ddata->n, stat, handle);
         dopt->nLL = 0.5 * nll;
         break;
       }
       default:  //default to normal
       { 
         float nll = 0;
-        device_vector2Norm(dopt->residuals, &nll, stat, handle);
+        device_ptr2Norm(dopt->residuals, &nll, ddata->n, stat, handle);
         dopt->nLL = 0.5 * nll;
         break;
       }
@@ -270,8 +275,8 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
     float nLL = calcNegLL(ddata, dcoef, dopt, dmisc, dcoef->theta, j, stat, handle);
     
     //iprod is the dot product of diff and grad
-    float iprod=0; device_vectorDot(dopt->diff_theta, dopt->grad, &iprod, stat, handle);
-    float sumSquareDiff=0; device_vector2Norm(dopt->diff_theta, &sumSquareDiff, stat, handle);
+    float iprod=0; device_ptrDot(dopt->diff_theta, dopt->grad, &iprod, ddata->p, stat, handle);
+    float sumSquareDiff=0; device_ptr2Norm(dopt->diff_theta, &sumSquareDiff, ddata->p, stat, handle);
 
     int check = (int)(nLL < (dopt->nLL + iprod + sumSquareDiff) / (2 * dmisc->t));
     if (check == 0) dmisc->t = dmisc->t * dmisc->gamma;
@@ -286,19 +291,19 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
       case 0:  //normal
       {
         //yhat = XB
-        device_vectorSgemv(ddata->X, dcoef->beta, dopt->yhat, ddata->n, ddata->p, stat, handle);
+        device_ptrSgemv(ddata->X, dcoef->beta, dopt->yhat, ddata->n, ddata->p, stat, handle);
         //residuals = y - yhat
-        thrust::transform(ddata->y.begin(), ddata->y.end(),
-                          dopt->yhat.begin(),
-                          dopt->residuals.begin(),
+        thrust::transform(ddata->y, ddata->y + ddata->n,
+                          dopt->yhat,
+                          dopt->residuals,
                           thrust::minus<float>());
         //grad = X^T residuals
-        device_vectorCrossProd(ddata->X, dopt->residuals, dopt->grad, ddata->n,
-                               ddata->p, stat, handle);
+        device_ptrCrossProd(ddata->X, dopt->residuals, dopt->grad, ddata->n,
+                            ddata->p, stat, handle);
         //U = -t * grad + beta
-        thrust::transform(dopt->grad.begin(), dopt->grad.end(),
-                          dcoef->beta.begin(),
-                          dopt->U.begin(),
+        thrust::transform(dopt->grad, dopt->grad + ddata->p,
+                          dcoef->beta,
+                          dopt->U,
                           saxpy(-dmisc->t));
         proxCalc(ddata, dcoef, dopt, dmisc, j, stat, handle);
         break;
@@ -317,13 +322,12 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
     {
       case 0:  //normal
       {
-        float lambda = 1;
-        device_vectorSoftThreshold(dopt->U, dcoef->theta, lambda * 10);
+        device_ptrSoftThreshold(dopt->U, dcoef->theta, ddata->lambda[j] * dmisc->t, ddata->p);
         break;
       }
       default:
       {
-        device_vectorSoftThreshold(dopt->U, dcoef->theta, ddata->lambda[j] * dmisc->t);
+        device_ptrSoftThreshold(dopt->U, dcoef->theta, ddata->lambda[j] * dmisc->t, ddata->p);
         break;
       }
     }
@@ -332,19 +336,19 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
   void nestStep(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j, int iter,
                 cublasStatus_t stat, cublasHandle_t handle)
   {
-    dcoef->beta_old = dcoef->beta;
+    device_ptrCopy(dcoef->beta, dcoef->beta_old, ddata->p);
     //momentum = theta - theta old
-    thrust::transform(dcoef->theta.begin(), dcoef->theta.end(),
-                      dcoef->theta_old.begin(),
-                      dcoef->momentum.begin(),
+    thrust::transform(dcoef->theta, dcoef->theta + ddata->p,
+                      dcoef->theta_old,
+                      dcoef->momentum,
                       thrust::minus<float>());
     float scale = (float) (iter % dmisc->reset) / (iter % dmisc->reset + 3);
     //beta = theta + scale*momentum
-    thrust::transform(dcoef->momentum.begin(), dcoef->momentum.end(),
-                      dcoef->theta.begin(),
-                      dcoef->beta.begin(),
+    thrust::transform(dcoef->momentum, dcoef->momentum + ddata->p,
+                      dcoef->theta,
+                      dcoef->beta,
                       saxpy(scale));
-    dcoef->theta_old = dcoef->theta;
+    device_ptrCopy(dcoef->theta, dcoef->theta_old, ddata->p);
   }
 
   void shutdown(data* ddata, coef* dcoef, opt* dopt, misc* dmisc)
@@ -356,76 +360,90 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
     MISC MATH FUNCTIONS
   */
 
-  thrust::device_vector<float> makeDeviceVector(float* x, int size)
+  thrust::device_ptr<float> makeDeviceVector(float* x, int size)
   {
     thrust::host_vector<float> h(x, x+size);
     thrust::device_vector<float> d = h;
-    return d;
+    return d.data();
   }
 
-  thrust::device_vector<float> makeEmptyDeviceVector(int size)
+  thrust::device_ptr<float> makeEmptyDeviceVector(int size)
   {
     thrust::host_vector<float> h(size,0);
     thrust::device_vector<float> d = h;
-    return d;
+    return d.data();
+  }
+
+  void device_ptrCopy(thrust::device_ptr<float> from,
+                      thrust::device_ptr<float> to,
+                      int size)
+  {
+    /*thrust::device_vector<float> A(from, from + size);
+    thrust::device_vector<float> B(to, to + size);
+    B = A;*/
+    to = from;
   }
 
   // ||x||_max
-  float device_vectorMaxNorm(thrust::device_vector<float> x)
+  float device_ptrMaxNorm(thrust::device_ptr<float> x, int size)
   {
-    return thrust::transform_reduce(x.begin(), x.end(),
-                                    absolute_value(), 0.0, thrust::maximum<float>());  
+    thrust::device_vector<float> d(x, x + size);
+    return thrust::reduce(d.begin(), d.end(), (float) 0, thrust::plus<float>()); 
+    /*return thrust::transform_reduce(d.begin(), d.end(),
+                                    absolute_value(), (float) 0, thrust::maximum<float>());  
+    */
   }
 
   // ||x||_2^2
-  void device_vector2Norm(thrust::device_vector<float> x, float* result,
-                          cublasStatus_t stat, cublasHandle_t handle)
+  void device_ptr2Norm(thrust::device_ptr<float> x, float* result, int size,
+                       cublasStatus_t stat, cublasHandle_t handle)
   {  
-    cublasSnrm2(handle, x.size(), thrust::raw_pointer_cast(&x[0]), 1, result);
+    cublasSnrm2(handle, size, thrust::raw_pointer_cast(x), 1, result);
   }
 
-  void device_vectorDot(thrust::device_vector<float> x, thrust::device_vector<float> y,
-                        float* result,
-                        cublasStatus_t stat, cublasHandle_t handle)
+  void device_ptrDot(thrust::device_ptr<float> x, thrust::device_ptr<float> y,
+                     float* result, int size,
+                     cublasStatus_t stat, cublasHandle_t handle)
   {  
-    cublasSdot(handle, x.size(), thrust::raw_pointer_cast(&x[0]), 1,
-               thrust::raw_pointer_cast(&y[0]), 1, result);
+    cublasSdot(handle, size, thrust::raw_pointer_cast(x), 1,
+               thrust::raw_pointer_cast(y), 1, result);
   }
 
   // b = X^T y
-  void device_vectorCrossProd(thrust::device_vector<float> X,
-                              thrust::device_vector<float> y,
-                              thrust::device_vector<float> b,
-                              int n, int p,
-                              cublasStatus_t stat, cublasHandle_t handle)
+  void device_ptrCrossProd(thrust::device_ptr<float> X,
+                           thrust::device_ptr<float> y,
+                           thrust::device_ptr<float> b,
+                           int n, int p,
+                           cublasStatus_t stat, cublasHandle_t handle)
   {
     float alpha = 1; float beta = 0;
     cublasSgemv(handle, CUBLAS_OP_T, n, p, &alpha,
-                thrust::raw_pointer_cast(&X[0]), n,
-                thrust::raw_pointer_cast(&y[0]), 1,
-                &beta, thrust::raw_pointer_cast(&b[0]), 1); 
+                thrust::raw_pointer_cast(X), n,
+                thrust::raw_pointer_cast(y), 1,
+                &beta, thrust::raw_pointer_cast(b), 1); 
   }
 
   // b = Ax
-  void device_vectorSgemv(thrust::device_vector<float> A,
-                          thrust::device_vector<float> x,
-                          thrust::device_vector<float> b,
-                          int n, int p,
-                          cublasStatus_t stat, cublasHandle_t handle)
+  void device_ptrSgemv(thrust::device_ptr<float> A,
+                       thrust::device_ptr<float> x,
+                       thrust::device_ptr<float> b,
+                       int n, int p,
+                       cublasStatus_t stat, cublasHandle_t handle)
   {
-      float alpha = 1; float beta = 0;
-      cublasSgemv(handle, CUBLAS_OP_N, n, p, &alpha,
-                   thrust::raw_pointer_cast(&A[0]), n,
-                   thrust::raw_pointer_cast(&x[0]), 1,
-                   &beta, thrust::raw_pointer_cast(&b[0]), 1);
+    float alpha = 1; float beta = 0;
+    cublasSgemv(handle, CUBLAS_OP_N, n, p, &alpha,
+                thrust::raw_pointer_cast(A), n,
+                thrust::raw_pointer_cast(x), 1,
+                &beta, thrust::raw_pointer_cast(b), 1);
   }
 
   // S(x, lambda)
-  void device_vectorSoftThreshold(thrust::device_vector<float> x,
-                                  thrust::device_vector<float> dest,
-                                  float lambda)
+  void device_ptrSoftThreshold(thrust::device_ptr<float> x,
+                               thrust::device_ptr<float> dest,
+                               float lambda, int size)
   {
-    thrust::transform(x.begin(), x.end(), dest.begin(), soft_threshold(lambda));
+    thrust::transform(x, x + size,
+                      dest, soft_threshold(lambda));
   }
 
 }
