@@ -130,13 +130,13 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
     coef* dcoef = (coef*)malloc(sizeof(coef));
     opt* dopt = (opt*)malloc(sizeof(opt));
     misc* dmisc = (misc*)malloc(sizeof(misc));
- 
-    //allocate pointers, init cublas
+
+    //allocate pointers
     init(ddata, dcoef, dopt, dmisc,
          X, y, n[0], p[0], lambda, num_lambda[0],
          type[0], beta, maxIt[0], thresh[0], gamma[0],
          t[0], reset[0]);
-    
+   
     //Set cublas variables
     cublasStatus_t stat;
     cublasHandle_t handle;
@@ -160,7 +160,6 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
             float t, int reset)
   {
     /* Set data variables */
-
     ddata->X = makeDeviceVector(X, n*p);
     ddata->y = makeDeviceVector(y, n);
     ddata->lambda = thrust::host_vector<float>(lambda, lambda+num_lambda);
@@ -318,7 +317,8 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
     {
       case 0:  //normal
       {
-        device_vectorSoftThreshold(dopt->U, dcoef->theta, ddata->lambda[j] * dmisc->t);
+        float lambda = 1;
+        device_vectorSoftThreshold(dopt->U, dcoef->theta, lambda * 10);
         break;
       }
       default:
@@ -358,12 +358,16 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
 
   thrust::device_vector<float> makeDeviceVector(float* x, int size)
   {
-    return thrust::device_vector<float> (x, x+size);
+    thrust::host_vector<float> h(x, x+size);
+    thrust::device_vector<float> d = h;
+    return d;
   }
 
   thrust::device_vector<float> makeEmptyDeviceVector(int size)
   {
-    return thrust::device_vector<float> (size, 0);
+    thrust::host_vector<float> h(size,0);
+    thrust::device_vector<float> d = h;
+    return d;
   }
 
   // ||x||_max
@@ -439,9 +443,9 @@ int main() {
   int* maxIt = (int*)malloc(sizeof(int)); maxIt[0] = 10;
   int* reset = (int*)malloc(sizeof(int)); reset[0] = 5;
   float* lambda = (float*)malloc(sizeof(float) * num_lambda[0]); lambda[0] = 1;
-  float* thresh = (float*)malloc(sizeof(float)); thresh[0] = 0.0001;
-  float* gamma = (float*)malloc(sizeof(float)); gamma[0] = 0.5;
-  float* t = (float*)malloc(sizeof(float)); t[0] = 0.01;
+  float* thresh = (float*)malloc(sizeof(float)); thresh[0] = 0.00001;
+  float* gamma = (float*)malloc(sizeof(float)); gamma[0] = 0.9;
+  float* t = (float*)malloc(sizeof(float)); t[0] = 10;
 
   activePathSol(thrust::raw_pointer_cast(&X[0]),
                 thrust::raw_pointer_cast(&y[0]),
