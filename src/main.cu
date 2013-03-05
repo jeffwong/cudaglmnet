@@ -317,8 +317,7 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
     {
       case 0:  //normal
       {
-        float lambda = 1;
-        device_vectorSoftThreshold(dopt->U, dcoef->theta, lambda * 10);
+        device_vectorSoftThreshold(dopt->U, dcoef->theta, ddata->lambda[j] * dmisc->t);
         break;
       }
       default:
@@ -358,15 +357,17 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
 
   thrust::device_vector<float> makeDeviceVector(float* x, int size)
   {
-    thrust::host_vector<float> h(x, x+size);
-    thrust::device_vector<float> d = h;
+    //thrust::host_vector<float> h(x, x+size);
+    //thrust::device_vector<float> d = h;
+    thrust::device_vector<float> d(x, x+size);
     return d;
   }
 
   thrust::device_vector<float> makeEmptyDeviceVector(int size)
   {
-    thrust::host_vector<float> h(size,0);
-    thrust::device_vector<float> d = h;
+    //thrust::host_vector<float> h(size,0);
+    //thrust::device_vector<float> d = h;
+    thrust::device_vector<float> d(size,0);
     return d;
   }
 
@@ -374,7 +375,7 @@ thrust::device_vector<float> makeEmptyDeviceVector(int size);
   float device_vectorMaxNorm(thrust::device_vector<float> x)
   {
     return thrust::transform_reduce(x.begin(), x.end(),
-                                    absolute_value(), 0.0, thrust::maximum<float>());  
+                                    absolute_value(), (float) 0, thrust::maximum<float>());  
   }
 
   // ||x||_2^2
@@ -441,7 +442,7 @@ int main() {
 
   int* type = (int*)malloc(sizeof(int)); type[0] = 0;
   int* maxIt = (int*)malloc(sizeof(int)); maxIt[0] = 10;
-  int* reset = (int*)malloc(sizeof(int)); reset[0] = 5;
+  int* reset = (int*)malloc(sizeof(int)); reset[0] = 30;
   float* lambda = (float*)malloc(sizeof(float) * num_lambda[0]); lambda[0] = 1;
   float* thresh = (float*)malloc(sizeof(float)); thresh[0] = 0.00001;
   float* gamma = (float*)malloc(sizeof(float)); gamma[0] = 0.9;
