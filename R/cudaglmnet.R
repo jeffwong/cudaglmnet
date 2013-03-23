@@ -10,14 +10,14 @@
 #' @param step_size step size for gradient descent
 #' @param threshold convergence threshold
 #' @param maxit maximum iterations
-#' @useDynLib GPULassoPath
+#' @useDynLib cudaglmnet
 #' @export
-cudaLassoPath <- function(X, y, lambda,
+cudaglmnet <- function(X, y, lambda,
                           family = "gaussian",
                           B = matrix(0, ncol(X), length(lambda)),
                           standardize.x = T, standardize.y = T,
-                          maxIt = 1e3, 
-                          threshold = 1e-6, gamma = 1, step_size = 0.5, reset = 5) {
+                          maxIt = 5, 
+                          threshold = 1e-6, gamma = 0.9, step_size = 10, reset = 30) {
   
   n <- nrow(X)
   p <- ncol(X)
@@ -45,12 +45,11 @@ cudaLassoPath <- function(X, y, lambda,
             type = as.integer(type), beta = as.single(B), maxIt = as.integer(maxIt),
             thresh = as.single(threshold), gamma = as.single(gamma), t = as.single(step_size),
             reset = as.integer(reset),
-            package = "RGPULasso")
+            package = "cudaglmnet")
   fit$X.sd = X.sd
   fit$intercept = intercept
   fit$y.sd = y.sd
-  structure(fit, class="RGPULasso.cudalasso")
-
+  structure(fit, class="cudaglmnet.cudalasso")
 }
 
 #' Lasso Coefficients
@@ -58,8 +57,8 @@ cudaLassoPath <- function(X, y, lambda,
 #' @param cudalasso fit from cudaLassoPath
 #' @param ... other params, not used
 #' @method coef RGPULasso.cudalasso
-#' @S3method coef RGPULasso.cudalasso
-coef.RGPULasso.cudalasso = function(cudalasso, ...) {
+#' @S3method coef cudaglmnet.cudalasso
+coef.cudaglmnet.cudalasso = function(cudalasso, ...) {
   n = cudalasso$n
   p = cudalasso$p
   b = matrix(cudalasso$beta, n, p)
@@ -69,4 +68,4 @@ coef.RGPULasso.cudalasso = function(cudalasso, ...) {
   fit$beta = rbind(intercept * y.sd, fit$beta)
 }
 
-setClass("RGPULasso.cudalasso", representation = "list", S3methods = T)
+setClass("cudaglmnet.cudalasso", representation = "list", S3methods = T)

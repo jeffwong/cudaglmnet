@@ -1,7 +1,7 @@
 EXT := cu 
 
 OBJS := main.o 
-TARGETS := GPULassoPath.so
+TARGETS := cudaglmnet.so
 
 #OBJS13 := @OBJS13@ 
 

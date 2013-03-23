@@ -1,13 +1,13 @@
-Package: RGPULasso
+Package: cudaglmnet
 Maintainer: Noah Simon <nsimon@stanford.edu>
 Author: Noah Simon
 Version: 0.1
 License: GPL-3
-Title: RGPULasso
-Description: CUDA acceleration to compute the lasso
+Title: cudaglmnet
+Description: CUDA acceleration to compute various lasso and elastic net problems
 Suggests:
     testthat,
     roxygen2
 Collate:
-    'RGPULasso-package.r'
-    'GPULassoPath.R'
+    'cudaglmnet-package.r'
+    'cudaglmnet.R'

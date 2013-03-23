@@ -1,8 +1,10 @@
-\name{cudaLassoPath}
-\alias{cudaLassoPath}
-\title{Lasso on a GPU}
+\docType{package}
+\name{cudaglmnet}
+\alias{cudaglmnet}
+\alias{cudaglmnet-package}
+\title{cudaglmnet}
 \usage{
-  cudaLassoPath(X, y, lambda, family = "gaussian",
+  cudaglmnet(X, y, lambda, family = "gaussian",
     B = matrix(0, ncol(X), length(lambda)),
     standardize.x = T, standardize.y = T, maxIt = 5,
     threshold = 1e-06, gamma = 0.9, step_size = 10,
@@ -31,6 +33,8 @@
   \item{maxit}{maximum iterations}
 }
 \description{
+  cudaglmnet
+
   Entry point to CUDA implementation of lasso
 }
 
