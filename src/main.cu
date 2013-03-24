@@ -224,21 +224,16 @@ void device_ptrCopy(thrust::device_ptr<float>,
                           dopt->residuals,
                           thrust::minus<float>());
         cudaThreadSynchronize();
-        //grad = -X^T residuals
+        //grad = X^T residuals
         device_ptrCrossProd(ddata->X, dopt->residuals, dopt->grad, ddata->n,
                             ddata->p, stat, handle);
-        thrust::device_vector<float> ones(ddata->p, -1);
-        thrust::transform(dopt->grad, dopt->grad + ddata->p,
-                          ones.begin(), dopt->grad,
-                          thrust::multiplies<float>());
-        //U = -t * grad + beta
+        //U = t * grad + beta
         thrust::transform(dopt->grad, dopt->grad + ddata->p,
                           dcoef->beta,
                           dopt->U,
-                          saxpy(-dmisc->t));
+                          saxpy(dmisc->t));
         cudaThreadSynchronize();
         proxCalc(ddata, dcoef, dopt, dmisc, j, stat, handle);
-        cudaThreadSynchronize();
         break;
       }
       default:
@@ -273,11 +268,12 @@ void device_ptrCopy(thrust::device_ptr<float>,
     if (DEBUG) printf("Inside checkStep\n");
     float nLL = calcNegLL(ddata, dcoef, dopt, dmisc, dcoef->theta, j, stat, handle);
     
-    //diff = theta - beta
-    thrust::transform(dcoef->theta, dcoef->theta + ddata->p,
-                      dcoef->beta,
+    //diff = beta-theta
+    thrust::transform(dcoef->beta, dcoef->beta + ddata->p,
+                      dcoef->theta,
                       dopt->diff,
                       thrust::minus<float>());
+    cudaThreadSynchronize();
     //iprod is the dot product of diff and grad
     float iprod=0; device_ptrDot(dopt->diff, dopt->grad, &iprod, ddata->p, stat, handle);
     float sumSquareDiff=0; device_ptr2Norm(dopt->diff, &sumSquareDiff, ddata->p, stat, handle);
@@ -298,12 +294,14 @@ void device_ptrCopy(thrust::device_ptr<float>,
                       dcoef->theta_old,
                       dcoef->momentum,
                       thrust::minus<float>());
+    cudaThreadSynchronize();
     float scale = ((float) (iter % dmisc->reset)) / (iter % dmisc->reset + 3);
     //beta = theta + scale*momentum
     thrust::transform(dcoef->momentum, dcoef->momentum + ddata->p,
                       dcoef->theta,
                       dcoef->beta,
                       saxpy(scale));
+    cudaThreadSynchronize();
     device_ptrCopy(dcoef->theta, dcoef->theta_old, ddata->p);
   }
 
@@ -482,9 +480,9 @@ extern "C"{
     //solve
     device_ptrSgemv(ddata->X, dcoef->beta, dopt->yhat, ddata->n, ddata->p, stat, handle);
     thrust::transform(ddata->y, ddata->y + ddata->n,
-                          dopt->yhat,
-                          dopt->residuals,
-                          thrust::minus<float>());
+                      dopt->yhat,
+                      dopt->residuals,
+                      thrust::minus<float>());
     pathSol(ddata, dcoef, dopt, dmisc, beta, stat, handle);
     //shutdown*/
     shutdown(ddata, dcoef, dopt, dmisc);
