@@ -15,6 +15,8 @@
 #include <thrust/sequence.h>
 #include <thrust/generate.h>
 
+#define DEBUG 0
+
 typedef struct {
     int n,p,num_lambda;
     float* lambda;
@@ -27,7 +29,7 @@ typedef struct {
 
 typedef struct {
     float nLL;
-    thrust::device_ptr<float> eta, yhat, residuals, grad, U, diff_beta, diff_theta;
+    thrust::device_ptr<float> eta, yhat, residuals, grad, U, diff_beta, diff_theta, diff;
 } opt;
 
 typedef struct {
@@ -89,42 +91,42 @@ void init(data*, coef*, opt*, misc*,
           float*, float*, int, int, float*, int,
           int, float*, int, float, float,
           float, int);
-void pathSol(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, float* beta,cublasStatus_t stat, cublasHandle_t handle );
-void singleSolve(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j,cublasStatus_t stat, cublasHandle_t handle );
-float calcNegLL(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, thrust::device_ptr<float> pvector, int j,cublasStatus_t stat, cublasHandle_t handle );
-void gradStep(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j,cublasStatus_t stat, cublasHandle_t handle );
-void proxCalc(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j,cublasStatus_t stat, cublasHandle_t handle );
-void nestStep(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j, int iter,cublasStatus_t stat, cublasHandle_t handle );
-int checkStep(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j,cublasStatus_t stat, cublasHandle_t handle );
-int checkCrit(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j, int iter,cublasStatus_t stat, cublasHandle_t handle );
-void shutdown(data* ddata, coef* dcoef, opt* dopt, misc* dmisc);
-void device_ptr2Norm(thrust::device_ptr<float> x, float* result, int size, cublasStatus_t stat, cublasHandle_t handle );
-void device_ptrDot(thrust::device_ptr<float> x, thrust::device_ptr<float> y,
-                   float* result, int size, cublasStatus_t stat, cublasHandle_t handle );
-float device_ptrMaxNorm(thrust::device_ptr<float> x, int size);
-void device_ptrSoftThreshold(thrust::device_ptr<float> x, thrust::device_ptr<float>, float lambda, int size);
-void device_ptrSgemv(thrust::device_ptr<float> A,
-                          thrust::device_ptr<float> x,
-                          thrust::device_ptr<float> b,
-                          int n, int p,
-                          cublasStatus_t stat, cublasHandle_t handle );
-void device_ptrCrossProd(thrust::device_ptr<float> X,
-                              thrust::device_ptr<float> y,
-                              thrust::device_ptr<float> b,
-                              int n, int p,
-                            cublasStatus_t stat, cublasHandle_t handle) ;
-thrust::device_ptr<float> makeDeviceVector(float* x, int size);
-thrust::device_ptr<float> makeEmptyDeviceVector(int size);
-void device_ptrCopy(thrust::device_ptr<float> from,
-                    thrust::device_ptr<float> to,
-                    int size);
+void pathSol(data*, coef*, opt*, misc*, float*, cublasStatus_t, cublasHandle_t);
+void singleSolve(data*, coef*, opt*, misc*, int, cublasStatus_t, cublasHandle_t);
+float calcNegLL(data*, coef*, opt*, misc*, thrust::device_ptr<float>, int, cublasStatus_t, cublasHandle_t);
+void gradStep(data*, coef*, opt*, misc*, int, cublasStatus_t, cublasHandle_t);
+void proxCalc(data*, coef*, opt*, misc*, int, cublasStatus_t, cublasHandle_t);
+void nestStep(data*, coef*, opt*, misc*, int, int, cublasStatus_t, cublasHandle_t);
+int checkStep(data*, coef*, opt*, misc*, int, cublasStatus_t, cublasHandle_t handle );
+int checkCrit(data*, coef*, opt*, misc*, int, int, cublasStatus_t, cublasHandle_t);
+void shutdown(data*, coef*, opt*, misc*);
+void device_ptr2Norm(thrust::device_ptr<float>, float*, int, cublasStatus_t, cublasHandle_t);
+void device_ptrDot(thrust::device_ptr<float>, thrust::device_ptr<float>,
+                   float*, int, cublasStatus_t, cublasHandle_t);
+float device_ptrMaxNorm(thrust::device_ptr<float>, int);
+void device_ptrSoftThreshold(thrust::device_ptr<float>, thrust::device_ptr<float>, float, int);
+void device_ptrSgemv(thrust::device_ptr<float>,
+                          thrust::device_ptr<float>,
+                          thrust::device_ptr<float>,
+                          int, int,
+                          cublasStatus_t, cublasHandle_t);
+void device_ptrCrossProd(thrust::device_ptr<float>,
+                         thrust::device_ptr<float>,
+                         thrust::device_ptr<float>,
+                         int, int,
+                         cublasStatus_t, cublasHandle_t) ;
+thrust::device_ptr<float> makeDeviceVector(float*, int);
+thrust::device_ptr<float> makeEmptyDeviceVector(int);
+void device_ptrCopy(thrust::device_ptr<float>,
+                    thrust::device_ptr<float>,
+                    int);
 
   void init(data* ddata, coef* dcoef, opt* dopt, misc* dmisc,
             float* X, float* y, int n, int p, float* lambda, int num_lambda,
             int type, float* beta, int maxIt, float thresh, float gamma,
             float t, int reset)
   {
-    printf("Inside init\n");
+    if (DEBUG) printf("Inside init\n");
 
     /* Set data variables */
     ddata->lambda = lambda;
@@ -147,7 +149,7 @@ void device_ptrCopy(thrust::device_ptr<float> from,
   void pathSol(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, float* beta,
                cublasStatus_t stat, cublasHandle_t handle)
   {
-    printf("Inside pathSol\n");
+    if (DEBUG) printf("Inside pathSol\n");
     int j = 0;
     for (j=0; j < ddata->num_lambda; j++){
       device_ptrCopy(dcoef->beta, dcoef->beta_old, ddata->p);
@@ -162,7 +164,7 @@ void device_ptrCopy(thrust::device_ptr<float> from,
   void singleSolve(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j,
                    cublasStatus_t stat, cublasHandle_t handle)
   {
-    printf("Inside singleSolve\n");
+    if (DEBUG) printf("Inside singleSolve\n");
     int iter = 0;
     do
     {
@@ -180,7 +182,7 @@ void device_ptrCopy(thrust::device_ptr<float> from,
                   thrust::device_ptr<float> pvector, int j,
                   cublasStatus_t stat, cublasHandle_t handle)
   {
-    printf("Inside calcNegLL\n");
+    if (DEBUG) printf("Inside calcNegLL\n");
 
     device_ptrSgemv(ddata->X, pvector, dopt->eta, ddata->n, ddata->p, stat, handle);
     switch (dmisc->type)
@@ -189,7 +191,6 @@ void device_ptrCopy(thrust::device_ptr<float> from,
       {
         float nll = 0;
         device_ptr2Norm(dopt->residuals, &nll, ddata->n, stat, handle);
-        printf("calcNegLL nll %f\n", nll);
         dopt->nLL = 0.5 * nll;
         break;
       }
@@ -201,13 +202,14 @@ void device_ptrCopy(thrust::device_ptr<float> from,
         break;
       }
     }
+    if (DEBUG) printf("calcNegLL nll %f\n", dopt->nLL);
     return dopt->nLL;
   }
 
   void gradStep(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j,
                 cublasStatus_t stat, cublasHandle_t handle)
   {
-    printf("Inside gradStep\n");
+    if (DEBUG) printf("Inside gradStep\n");
     switch (dmisc->type)
     {
       case 0:  //normal
@@ -220,9 +222,13 @@ void device_ptrCopy(thrust::device_ptr<float> from,
                           dopt->residuals,
                           thrust::minus<float>());
         cudaThreadSynchronize();
-        //grad = X^T residuals
+        //grad = -X^T residuals
         device_ptrCrossProd(ddata->X, dopt->residuals, dopt->grad, ddata->n,
                             ddata->p, stat, handle);
+        thrust::device_vector<float> ones(ddata->p, -1);
+        thrust::transform(dopt->grad, dopt->grad + ddata->p,
+                          ones.begin(), dopt->grad,
+                          thrust::multiplies<float>());
         //U = -t * grad + beta
         thrust::transform(dopt->grad, dopt->grad + ddata->p,
                           dcoef->beta,
@@ -243,7 +249,7 @@ void device_ptrCopy(thrust::device_ptr<float> from,
   void proxCalc(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j,
                 cublasStatus_t stat, cublasHandle_t handle)
   {
-    printf("Inside proxCalc\n");
+    if (DEBUG) printf("Inside proxCalc\n");
     switch (dmisc->type)
     {
       case 0:  //normal
@@ -262,22 +268,27 @@ void device_ptrCopy(thrust::device_ptr<float> from,
   int checkStep(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j,
                 cublasStatus_t stat, cublasHandle_t handle)
   {
-    printf("Inside checkStep\n");
+    if (DEBUG) printf("Inside checkStep\n");
     float nLL = calcNegLL(ddata, dcoef, dopt, dmisc, dcoef->theta, j, stat, handle);
     
+    //diff = theta - beta
+    thrust::transform(dcoef->theta, dcoef->theta + ddata->p,
+                      dcoef->beta,
+                      dopt->diff,
+                      thrust::minus<float>());
     //iprod is the dot product of diff and grad
-    float iprod=0; device_ptrDot(dopt->diff_theta, dopt->grad, &iprod, ddata->p, stat, handle);
-    float sumSquareDiff=0; device_ptr2Norm(dopt->diff_theta, &sumSquareDiff, ddata->p, stat, handle);
+    float iprod=0; device_ptrDot(dopt->diff, dopt->grad, &iprod, ddata->p, stat, handle);
+    float sumSquareDiff=0; device_ptr2Norm(dopt->diff, &sumSquareDiff, ddata->p, stat, handle);
 
     int check = (int)(nLL < ((dopt->nLL + iprod + sumSquareDiff) / (2 * dmisc->t)));
-    if (check == 0) {printf("t before update %f\n", dmisc->t); dmisc->t = dmisc->t * dmisc->gamma; printf("t after update %f\n", dmisc->t);} 
+    if (check == 0) dmisc->t = dmisc->t * dmisc->gamma;
     return check;
   }
 
   void nestStep(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j, int iter,
                 cublasStatus_t stat, cublasHandle_t handle)
   {
-    printf("Inside nestStep\n");
+    if (DEBUG) printf("Inside nestStep\n");
     device_ptrCopy(dcoef->beta, dcoef->beta_old, ddata->p);
     //momentum = theta - theta old
     thrust::transform(dcoef->theta, dcoef->theta + ddata->p,
@@ -296,9 +307,9 @@ void device_ptrCopy(thrust::device_ptr<float> from,
   int checkCrit(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j, int iter,
                 cublasStatus_t stat, cublasHandle_t handle)
   {
-    printf("Inside checkCrit\n");
-    float move = device_ptrMaxNorm(dcoef->momentum, ddata->p); 
-    printf("move %f\n", move); //why is move 0??? 
+    if (DEBUG) printf("Inside checkCrit\n");
+    float move = device_ptrMaxNorm(dopt->diff, ddata->p); 
+    if (DEBUG) printf("move %f\n", move);
     return ((iter > dmisc->maxIt) || (move < dmisc->thresh));
   }
 
@@ -442,6 +453,7 @@ extern "C"{
     thrust::device_vector<float> dU(p[0],0);
     thrust::device_vector<float> ddiff_beta(p[0],0);
     thrust::device_vector<float> ddiff_theta(p[0],0);
+    thrust::device_vector<float> ddiff(p[0],0);
     dopt->eta = deta.data();
     dopt->yhat = dyhat.data();
     dopt->residuals = dresiduals.data();
@@ -449,6 +461,7 @@ extern "C"{
     dopt->U = dU.data();
     dopt->diff_beta = ddiff_beta.data();
     dopt->diff_theta = ddiff_theta.data();
+    dopt->diff = ddiff.data();
 
     //allocate pointers
     init(ddata, dcoef, dopt, dmisc,
@@ -499,7 +512,8 @@ int main() {
                 n, p, lambda, num_lambda,
                 type, thrust::raw_pointer_cast(&beta[0]), maxIt, thresh, gamma,
                 t, reset);
-  
+  int i = 0;
+  for(i = 0; i < beta.size(); i++) printf("beta[%i]: %f\n", i, beta[i]); 
   free(n); free(p); free(num_lambda);
   free(type); free(maxIt); free(reset);
   free(lambda); free(thresh); free(gamma); free(t);

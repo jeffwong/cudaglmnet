@@ -6,7 +6,6 @@
 #' @param B initial value for beta matrix for varying lambda penalty
 #' @param lambda l1 penalties
 #' @param standardize.x logical.  If true standardize the design matrix
-#' @param standardize.y logical.  If true standardize the response vector
 #' @param step_size step size for gradient descent
 #' @param threshold convergence threshold
 #' @param maxit maximum iterations
@@ -15,7 +14,7 @@
 cudaglmnet <- function(X, y, lambda,
                           family = "gaussian",
                           B = matrix(0, ncol(X), length(lambda)),
-                          standardize.x = T, standardize.y = T,
+                          standardize.x = T,
                           maxIt = 5, 
                           threshold = 1e-6, gamma = 0.9, step_size = 10, reset = 30) {
   
@@ -25,16 +24,11 @@ cudaglmnet <- function(X, y, lambda,
   if (standardize.x) {
     X = scale(X, center=F)
     X.sd = attr(X, "scaled:scale")
-  } else X.sd = rep(1, ncol(X))
-
-  if (standardize.y) {
-    y = scale(y, center=F)
-    y.sd = attr(y, "scaled:scale")
-  } else y.sd = 1
+  } else X.sd = rep(1, p)
 
   intercept = mean(y)
-  y = y - intercept
-
+  y = y-intercept
+  
   type = switch(family,
                 "gaussian" = 0
                )
@@ -48,7 +42,6 @@ cudaglmnet <- function(X, y, lambda,
             package = "cudaglmnet")
   fit$X.sd = X.sd
   fit$intercept = intercept
-  fit$y.sd = y.sd
   structure(fit, class="cudaglmnet.cudalasso")
 }
 
@@ -61,11 +54,13 @@ cudaglmnet <- function(X, y, lambda,
 coef.cudaglmnet.cudalasso = function(cudalasso, ...) {
   n = cudalasso$n
   p = cudalasso$p
-  b = matrix(cudalasso$beta, n, p)
+  b = matrix(cudalasso$beta, p, length(cudalasso$lambda))
 
   #scale back
-  fit$beta = diag(X.sd) %*% fit$beta
-  fit$beta = rbind(intercept * y.sd, fit$beta)
+  apply(b, 2, function(j) { cudalasso$X.sd * j })
+  b = rbind(cudalasso$intercept, b)
+
+  return (b)
 }
 
 setClass("cudaglmnet.cudalasso", representation = "list", S3methods = T)
