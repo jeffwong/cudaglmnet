@@ -156,7 +156,9 @@ void device_ptrCopy(thrust::device_ptr<float>,
       //device_ptrCopy(dcoef->beta, dcoef->beta_old, ddata->p);
       device_ptrCopy(dcoef->theta, dcoef->theta_old, ddata->p);
       singleSolve(ddata, dcoef, dopt, dmisc, j, stat, handle);
+      cudaThreadSynchronize();
     }
+    cudaThreadSynchronize();
     cudaMemcpy(beta, thrust::raw_pointer_cast(dcoef->beta),
                sizeof(float) * (ddata->num_lambda * ddata->p), cudaMemcpyDeviceToHost);
   }
