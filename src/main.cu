@@ -157,10 +157,10 @@ void device_ptrCopy(thrust::device_ptr<float>,
       device_ptrCopy(dcoef->theta, dcoef->theta_old, ddata->p);
       singleSolve(ddata, dcoef, dopt, dmisc, j, stat, handle);
       cudaThreadSynchronize();
+      int startIndex = j*ddata->p;
+      cudaMemcpy(beta + startIndex, thrust::raw_pointer_cast(dcoef->beta),
+                 sizeof(float) * ddata->p, cudaMemcpyDeviceToHost);
     }
-    cudaThreadSynchronize();
-    cudaMemcpy(beta, thrust::raw_pointer_cast(dcoef->beta),
-               sizeof(float) * (ddata->num_lambda * ddata->p), cudaMemcpyDeviceToHost);
   }
 
   void singleSolve(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j,
@@ -496,7 +496,7 @@ extern "C"{
 int main() {
   int* n = (int*)malloc(sizeof(int)); n[0] = 100;
   int* p = (int*)malloc(sizeof(int)); p[0] = 10;
-  int* num_lambda = (int*)malloc(sizeof(int)); num_lambda[0] = 1;
+  int* num_lambda = (int*)malloc(sizeof(int)); num_lambda[0] = 2;
  
   thrust::host_vector<float> X(n[0]*p[0],1);
   thrust::host_vector<float> y(n[0],1);
@@ -507,7 +507,7 @@ int main() {
   int* type = (int*)malloc(sizeof(int)); type[0] = 0;
   int* maxIt = (int*)malloc(sizeof(int)); maxIt[0] = 10;
   int* reset = (int*)malloc(sizeof(int)); reset[0] = 30;
-  float* lambda = (float*)malloc(sizeof(float) * num_lambda[0]); lambda[0] = 1;
+  float* lambda = (float*)malloc(sizeof(float) * num_lambda[0]); lambda[0] = 1; lambda[0] = 2;
   float* thresh = (float*)malloc(sizeof(float)); thresh[0] = 0.00001;
   float* gamma = (float*)malloc(sizeof(float)); gamma[0] = 0.9;
   float* t = (float*)malloc(sizeof(float)); t[0] = 10;
