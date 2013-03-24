@@ -29,7 +29,7 @@ typedef struct {
 
 typedef struct {
     float nLL;
-    thrust::device_ptr<float> eta, yhat, residuals, grad, U, diff_beta, diff_theta, diff;
+    thrust::device_ptr<float> eta, yhat, residuals, grad, U, diff_beta, diff;
 } opt;
 
 typedef struct {
@@ -152,7 +152,8 @@ void device_ptrCopy(thrust::device_ptr<float>,
     if (DEBUG) printf("Inside pathSol\n");
     int j = 0;
     for (j=0; j < ddata->num_lambda; j++){
-      device_ptrCopy(dcoef->beta, dcoef->beta_old, ddata->p);
+      //beta_old is never used
+      //device_ptrCopy(dcoef->beta, dcoef->beta_old, ddata->p);
       device_ptrCopy(dcoef->theta, dcoef->theta_old, ddata->p);
       singleSolve(ddata, dcoef, dopt, dmisc, j, stat, handle);
       int startIndex = j*ddata->p;
@@ -289,7 +290,8 @@ void device_ptrCopy(thrust::device_ptr<float>,
                 cublasStatus_t stat, cublasHandle_t handle)
   {
     if (DEBUG) printf("Inside nestStep\n");
-    device_ptrCopy(dcoef->beta, dcoef->beta_old, ddata->p);
+    //beta_old is never used
+    //device_ptrCopy(dcoef->beta, dcoef->beta_old, ddata->p);
     //momentum = theta - theta old
     thrust::transform(dcoef->theta, dcoef->theta + ddata->p,
                       dcoef->theta_old,
@@ -428,12 +430,14 @@ extern "C"{
     thrust::device_vector<float> dX(X, X+(n[0]*p[0]));
     thrust::device_vector<float> dy(y, y+n[0]);
     thrust::device_vector<float> dbeta(beta, beta+p[0]);
-    thrust::device_vector<float> dbeta_old(beta, beta+p[0]);
+    //beta_old is never used
+    //thrust::device_vector<float> dbeta_old(beta, beta+p[0]);
 
     ddata->X = dX.data();
     ddata->y = dy.data();
     dcoef->beta = dbeta.data();
-    dcoef->beta_old = dbeta_old.data();
+    //beta_old is never used
+    //dcoef->beta_old = dbeta_old.data();
 
     /* Set coef variables */
 
@@ -451,16 +455,16 @@ extern "C"{
     thrust::device_vector<float> dresiduals(n[0],0);
     thrust::device_vector<float> dgrad(p[0],0);
     thrust::device_vector<float> dU(p[0],0);
-    thrust::device_vector<float> ddiff_beta(p[0],0);
-    thrust::device_vector<float> ddiff_theta(p[0],0);
+    //beta_old and diff_beta are never used
+    //thrust::device_vector<float> ddiff_beta(p[0],0);
     thrust::device_vector<float> ddiff(p[0],0);
     dopt->eta = deta.data();
     dopt->yhat = dyhat.data();
     dopt->residuals = dresiduals.data();
     dopt->grad = dgrad.data();
     dopt->U = dU.data();
-    dopt->diff_beta = ddiff_beta.data();
-    dopt->diff_theta = ddiff_theta.data();
+    //beta_old and diff_beta are never used
+    //dopt->diff_beta = ddiff_beta.data();
     dopt->diff = ddiff.data();
 
     //allocate pointers
