@@ -285,7 +285,8 @@ void device_ptrCopy(thrust::device_ptr<float>,
                 cublasStatus_t stat, cublasHandle_t handle)
   {
     if (DEBUG) printf("Inside checkStep\n");
-    float nLL = calcNegLL(ddata, dcoef, dopt, dmisc, dcoef->theta, j, stat, handle);
+    //float nLL = calcNegLL(ddata, dcoef, dopt, dmisc, dcoef->theta, j, stat, handle);
+    float nLL = dopt->nLL;
     
     //diff = beta-theta
     thrust::transform(dcoef->beta, dcoef->beta + ddata->p,
