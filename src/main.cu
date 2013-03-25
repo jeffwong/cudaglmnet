@@ -94,6 +94,7 @@ void init(data*, coef*, opt*, misc*,
 void pathSol(data*, coef*, opt*, misc*, float*, cublasStatus_t, cublasHandle_t);
 void singleSolve(data*, coef*, opt*, misc*, int, cublasStatus_t, cublasHandle_t);
 float calcNegLL(data*, coef*, opt*, misc*, thrust::device_ptr<float>, int, cublasStatus_t, cublasHandle_t);
+void computeFit(data*, coef*, opt*, misc*, cublasStatus_t, cublasHandle_t);
 void gradStep(data*, coef*, opt*, misc*, int, cublasStatus_t, cublasHandle_t);
 void proxCalc(data*, coef*, opt*, misc*, int, cublasStatus_t, cublasHandle_t);
 void nestStep(data*, coef*, opt*, misc*, int, int, cublasStatus_t, cublasHandle_t);
@@ -171,6 +172,7 @@ void device_ptrCopy(thrust::device_ptr<float>,
     do
     {
       calcNegLL(ddata, dcoef, dopt, dmisc, dcoef->beta, j, stat, handle);
+      computeFit(ddata, dcoef, dopt, dmisc, stat, handle);
       do
       {
         gradStep(ddata, dcoef, dopt, dmisc, j, stat, handle);
@@ -208,10 +210,10 @@ void device_ptrCopy(thrust::device_ptr<float>,
     return dopt->nLL;
   }
 
-  void gradStep(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j,
-                cublasStatus_t stat, cublasHandle_t handle)
+  void computeFit(data* ddata, coef* dcoef, opt* dopt, misc* dmisc,
+                  cublasStatus_t stat, cublasHandle_t handle)
   {
-    if (DEBUG) printf("Inside gradStep\n");
+    if (DEBUG) printf("Inside computeFit\n");
     switch (dmisc->type)
     {
       case 0:  //normal
@@ -227,7 +229,24 @@ void device_ptrCopy(thrust::device_ptr<float>,
         //grad = X^T residuals
         device_ptrCrossProd(ddata->X, dopt->residuals, dopt->grad, ddata->n,
                             ddata->p, stat, handle);
-        //U = t * grad + beta
+        break;
+      }
+      default:
+      {
+        break;
+      }
+    }
+  }
+
+  void gradStep(data* ddata, coef* dcoef, opt* dopt, misc* dmisc, int j,
+                cublasStatus_t stat, cublasHandle_t handle)
+  {
+    if (DEBUG) printf("Inside gradStep\n");
+    switch (dmisc->type)
+    {
+      case 0:  //normal
+      {
+         //U = t * grad + beta
         thrust::transform(dopt->grad, dopt->grad + ddata->p,
                           dcoef->beta,
                           dopt->U,
@@ -266,7 +285,8 @@ void device_ptrCopy(thrust::device_ptr<float>,
                 cublasStatus_t stat, cublasHandle_t handle)
   {
     if (DEBUG) printf("Inside checkStep\n");
-    float nLL = calcNegLL(ddata, dcoef, dopt, dmisc, dcoef->theta, j, stat, handle);
+    //float nLL = calcNegLL(ddata, dcoef, dopt, dmisc, dcoef->theta, j, stat, handle);
+    float nLL = dopt->nLL;
     
     //diff = beta-theta
     thrust::transform(dcoef->beta, dcoef->beta + ddata->p,
