@@ -349,13 +349,8 @@ void device_ptrCopy(thrust::device_ptr<float>,
   void device_ptr2Norm(thrust::device_ptr<float> x, float* result, int size,
                        cublasStatus_t stat, cublasHandle_t handle)
   {  
-    //cublasSnrm2(handle, size, thrust::raw_pointer_cast(x), 1, result);
-    //cudaThreadSynchronize();
     *result = sqrt(thrust::transform_reduce(x, x+size,
                    square(), (float) 0, thrust::plus<float>()));
-    if (stat != CUBLAS_STATUS_SUCCESS) {
-      printf ("CUBLAS snrm2 failed with error %i\n", stat);
-    }
   }
 
   //result = <x,y>
@@ -363,12 +358,7 @@ void device_ptrCopy(thrust::device_ptr<float>,
                      float* result, int size,
                      cublasStatus_t stat, cublasHandle_t handle)
   {  
-    cublasSdot(handle, size, thrust::raw_pointer_cast(x), 1,
-               thrust::raw_pointer_cast(y), 1, result);
-    cudaThreadSynchronize();
-    if (stat != CUBLAS_STATUS_SUCCESS) {
-      printf ("CUBLAS sdot failed with error %i\n", stat);
-    }
+    *result = thrust::inner_product(x, x+size, y, (float) 0);
   }
 
   // b = X^T y
@@ -523,13 +513,13 @@ int main() {
   thrust::sequence(y.begin(), y.end());
   
   int* type = (int*)malloc(sizeof(int)); type[0] = 0;
-  int* maxIt = (int*)malloc(sizeof(int)); maxIt[0] = 100;
+  int* maxIt = (int*)malloc(sizeof(int)); maxIt[0] = 1500;
   int* reset = (int*)malloc(sizeof(int)); reset[0] = 30;
   float* lambda = (float*)malloc(sizeof(float) * num_lambda[0]);
   for(i = 0; i < num_lambda[0]; i++) lambda[i] = i;
   float* thresh = (float*)malloc(sizeof(float)); thresh[0] = 0.00001;
   float* gamma = (float*)malloc(sizeof(float)); gamma[0] = 0.5;
-  float* t = (float*)malloc(sizeof(float)); t[0] = 5;
+  float* t = (float*)malloc(sizeof(float)); t[0] = 1;
 
   activePathSol(thrust::raw_pointer_cast(&X[0]),
                 thrust::raw_pointer_cast(&y[0]),
