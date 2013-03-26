@@ -64,18 +64,6 @@ struct soft_threshold
         }
 };
 
-struct saxpy
-{
-    const float a;
-
-    saxpy(float _a) : a(_a) {}
-
-    __host__ __device__
-        float operator()(const float& x, const float& y) const { 
-            return a * x + y;
-        }
-};
-
 struct absolute_value
 {
     __host__ __device__
@@ -140,8 +128,6 @@ void device_ptrCopy(thrust::device_ptr<float>,
     ddata->p = p;
     ddata->num_lambda = num_lambda;
 
-    dopt->nLL = 0;
-
     /* Set misc variables */
 
     dmisc->type = type;
@@ -158,7 +144,6 @@ void device_ptrCopy(thrust::device_ptr<float>,
     if (DEBUG) printf("Inside pathSol\n");
     int j = 0;
     for (j=0; j < ddata->num_lambda; j++){
-      device_ptrCopy(dcoef->theta, dcoef->theta_old, ddata->p);
       singleSolve(ddata, dcoef, dopt, dmisc, j, stat, handle);
       int startIndex = j*ddata->p;
       cudaMemcpy(beta + startIndex, thrust::raw_pointer_cast(dcoef->beta),
@@ -182,6 +167,7 @@ void device_ptrCopy(thrust::device_ptr<float>,
       nestStep(ddata, dcoef, dopt, dmisc, j, iter, stat, handle);
       iter = iter + 1;
     } while (checkCrit(ddata, dcoef, dopt, dmisc, j, iter, stat, handle) == 0);
+    if (TIME) printf("Finished on iteration %i\n", iter);
   }
 
   float calcNegLL(data* ddata, coef* dcoef, opt* dopt, misc* dmisc,
@@ -249,10 +235,10 @@ void device_ptrCopy(thrust::device_ptr<float>,
       case 0:  //normal
       {
         //U = t * grad + beta
-        thrust::transform(dopt->grad, dopt->grad + ddata->p,
+        thrust::transform(dopt->grad, dopt->grad + ddata->p, 
                           dcoef->beta,
                           dopt->U,
-                          saxpy(dmisc->t));
+                          dmisc->t * thrust::placeholders::_1 + thrust::placeholders::_2);
         cudaThreadSynchronize();
         proxCalc(ddata, dcoef, dopt, dmisc, j, stat, handle);
         break;
@@ -299,7 +285,8 @@ void device_ptrCopy(thrust::device_ptr<float>,
     float iprod=0; device_ptrDot(dopt->diff, dopt->grad, &iprod, ddata->p, stat, handle);
     float sumSquareDiff=0; device_ptr2Norm(dopt->diff, &sumSquareDiff, ddata->p, stat, handle);
 
-    int check = (int)(nLL < ((dopt->nLL + iprod + sumSquareDiff) / (2 * dmisc->t)));
+    //int check = (int)(nLL < ((dopt->nLL + iprod + sumSquareDiff) / (2 * dmisc->t)));
+    int check = (int)(nLL < (dopt->nLL + iprod + (sumSquareDiff / (2 * dmisc->t))));
     if (check == 0) dmisc->t = dmisc->t * dmisc->gamma;
     return check;
   }
@@ -314,12 +301,13 @@ void device_ptrCopy(thrust::device_ptr<float>,
                       dcoef->momentum,
                       thrust::minus<float>());
     cudaThreadSynchronize();
-    float scale = ((float) (iter % dmisc->reset)) / (iter % dmisc->reset + 3);
+    int cycle = iter % dmisc->reset;
+    float scale = ((float) cycle) / (cycle + 3);
     //beta = theta + scale*momentum
     thrust::transform(dcoef->momentum, dcoef->momentum + ddata->p,
                       dcoef->theta,
                       dcoef->beta,
-                      saxpy(scale));
+                      scale * thrust::placeholders::_1 + thrust::placeholders::_2);
     cudaThreadSynchronize();
     device_ptrCopy(dcoef->theta, dcoef->theta_old, ddata->p);
   }
@@ -346,7 +334,7 @@ void device_ptrCopy(thrust::device_ptr<float>,
                       thrust::device_ptr<float> to,
                       int size)
   {
-    cudaMemcpy(thrust::raw_pointer_cast(&to[0]), thrust::raw_pointer_cast(&from[0]),
+    cudaMemcpy(thrust::raw_pointer_cast(to), thrust::raw_pointer_cast(from),
                sizeof(float) * size, cudaMemcpyDeviceToDevice);
   }
 
@@ -392,9 +380,9 @@ void device_ptrCopy(thrust::device_ptr<float>,
   {
     float alpha = 1; float beta = 0;
     stat = cublasSgemv(handle, CUBLAS_OP_T, n, p, &alpha,
-                thrust::raw_pointer_cast(&X[0]), n,
-                thrust::raw_pointer_cast(&y[0]), 1,
-                &beta, thrust::raw_pointer_cast(&b[0]), 1);
+                thrust::raw_pointer_cast(X), n,
+                thrust::raw_pointer_cast(y), 1,
+                &beta, thrust::raw_pointer_cast(b), 1);
     cudaThreadSynchronize();
     if (stat != CUBLAS_STATUS_SUCCESS) {
       printf ("CrossProd using CUBLAS sgemv failed with error %i\n", stat);
@@ -410,9 +398,9 @@ void device_ptrCopy(thrust::device_ptr<float>,
   {
     float alpha = 1; float beta = 0;
     stat = cublasSgemv(handle, CUBLAS_OP_N, n, p, &alpha,
-                       thrust::raw_pointer_cast(&A[0]), n,
-                       thrust::raw_pointer_cast(&x[0]), 1,
-                       &beta, thrust::raw_pointer_cast(&b[0]), 1);
+                       thrust::raw_pointer_cast(A), n,
+                       thrust::raw_pointer_cast(x), 1,
+                       &beta, thrust::raw_pointer_cast(b), 1);
     cudaThreadSynchronize();
     if (stat != CUBLAS_STATUS_SUCCESS) {
       printf ("CUBLAS sgemv failed with error %i\n", stat);
@@ -462,6 +450,7 @@ extern "C"{
 
     if (TIME) {
       endtime = clock() - starttime;
+      starttime = clock();
       printf ("device memcpy took %d clicks (%f seconds).\n",
               (int)endtime,((float)endtime)/CLOCKS_PER_SEC);
     }
@@ -524,7 +513,8 @@ extern "C"{
 int main() {
   int* n = (int*)malloc(sizeof(int)); n[0] = 1000;
   int* p = (int*)malloc(sizeof(int)); p[0] = 10;
-  int* num_lambda = (int*)malloc(sizeof(int)); num_lambda[0] = 2;
+  int* num_lambda = (int*)malloc(sizeof(int)); num_lambda[0] = 10;
+  int i = 0;
  
   thrust::host_vector<float> X(n[0]*p[0]);
   thrust::host_vector<float> y(n[0]);
@@ -533,20 +523,20 @@ int main() {
   thrust::sequence(y.begin(), y.end());
   
   int* type = (int*)malloc(sizeof(int)); type[0] = 0;
-  int* maxIt = (int*)malloc(sizeof(int)); maxIt[0] = 10;
+  int* maxIt = (int*)malloc(sizeof(int)); maxIt[0] = 100;
   int* reset = (int*)malloc(sizeof(int)); reset[0] = 30;
-  float* lambda = (float*)malloc(sizeof(float) * num_lambda[0]); lambda[0] = 1; lambda[0] = 2;
+  float* lambda = (float*)malloc(sizeof(float) * num_lambda[0]);
+  for(i = 0; i < num_lambda[0]; i++) lambda[i] = i;
   float* thresh = (float*)malloc(sizeof(float)); thresh[0] = 0.00001;
-  float* gamma = (float*)malloc(sizeof(float)); gamma[0] = 0.9;
-  float* t = (float*)malloc(sizeof(float)); t[0] = 10;
+  float* gamma = (float*)malloc(sizeof(float)); gamma[0] = 0.5;
+  float* t = (float*)malloc(sizeof(float)); t[0] = 5;
 
   activePathSol(thrust::raw_pointer_cast(&X[0]),
                 thrust::raw_pointer_cast(&y[0]),
                 n, p, lambda, num_lambda,
                 type, thrust::raw_pointer_cast(&beta[0]), maxIt, thresh, gamma,
                 t, reset);
-  int i = 0;
-  if (DEBUG) for(i = 0; i < beta.size(); i++) printf("beta[%i]: %f\n", i, beta[i]);
+  if (DEBUG) { for(i = 0; i < beta.size(); i++) printf("beta[%i]: %f\n", i, beta[i]); }
   free(n); free(p); free(num_lambda);
   free(type); free(maxIt); free(reset);
   free(lambda); free(thresh); free(gamma); free(t);
