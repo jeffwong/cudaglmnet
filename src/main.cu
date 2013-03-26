@@ -3,6 +3,9 @@
 #include <cublas_v2.h>
 #include <cuda.h>
 #include <iostream>
+#include <math.h>
+#include <time.h>
+#include <sys/mman.h>
 
 #include <thrust/host_vector.h>
 #include <thrust/device_vector.h>
@@ -14,6 +17,7 @@
 #include <thrust/copy.h>
 #include <thrust/sequence.h>
 #include <thrust/generate.h>
+#include <thrust/inner_product.h>
 
 #define DEBUG 0
 
@@ -153,11 +157,8 @@ void device_ptrCopy(thrust::device_ptr<float>,
     if (DEBUG) printf("Inside pathSol\n");
     int j = 0;
     for (j=0; j < ddata->num_lambda; j++){
-      //beta_old is never used
-      //device_ptrCopy(dcoef->beta, dcoef->beta_old, ddata->p);
       device_ptrCopy(dcoef->theta, dcoef->theta_old, ddata->p);
       singleSolve(ddata, dcoef, dopt, dmisc, j, stat, handle);
-      cudaThreadSynchronize();
       int startIndex = j*ddata->p;
       cudaMemcpy(beta + startIndex, thrust::raw_pointer_cast(dcoef->beta),
                  sizeof(float) * ddata->p, cudaMemcpyDeviceToHost);
@@ -246,7 +247,7 @@ void device_ptrCopy(thrust::device_ptr<float>,
     {
       case 0:  //normal
       {
-         //U = t * grad + beta
+        //U = t * grad + beta
         thrust::transform(dopt->grad, dopt->grad + ddata->p,
                           dcoef->beta,
                           dopt->U,
@@ -285,7 +286,6 @@ void device_ptrCopy(thrust::device_ptr<float>,
                 cublasStatus_t stat, cublasHandle_t handle)
   {
     if (DEBUG) printf("Inside checkStep\n");
-    //float nLL = calcNegLL(ddata, dcoef, dopt, dmisc, dcoef->theta, j, stat, handle);
     float nLL = dopt->nLL;
     
     //diff = beta-theta
@@ -307,8 +307,6 @@ void device_ptrCopy(thrust::device_ptr<float>,
                 cublasStatus_t stat, cublasHandle_t handle)
   {
     if (DEBUG) printf("Inside nestStep\n");
-    //beta_old is never used
-    //device_ptrCopy(dcoef->beta, dcoef->beta_old, ddata->p);
     //momentum = theta - theta old
     thrust::transform(dcoef->theta, dcoef->theta + ddata->p,
                       dcoef->theta_old,
@@ -362,13 +360,16 @@ void device_ptrCopy(thrust::device_ptr<float>,
   void device_ptr2Norm(thrust::device_ptr<float> x, float* result, int size,
                        cublasStatus_t stat, cublasHandle_t handle)
   {  
-    cublasSnrm2(handle, size, thrust::raw_pointer_cast(x), 1, result);
-    cudaThreadSynchronize();
+    //cublasSnrm2(handle, size, thrust::raw_pointer_cast(x), 1, result);
+    //cudaThreadSynchronize();
+    *result = sqrt(thrust::transform_reduce(x, x+size,
+                   square(), (float) 0, thrust::plus<float>()));
     if (stat != CUBLAS_STATUS_SUCCESS) {
       printf ("CUBLAS snrm2 failed with error %i\n", stat);
     }
   }
 
+  //result = <x,y>
   void device_ptrDot(thrust::device_ptr<float> x, thrust::device_ptr<float> y,
                      float* result, int size,
                      cublasStatus_t stat, cublasHandle_t handle)
@@ -438,6 +439,9 @@ extern "C"{
                      int* type, float* beta, int* maxIt, float* thresh, float* gamma,
                      float* t, int* reset)
   { 
+    //setup timers
+    clock_t time = clock();
+
     //setup pointers
     data* ddata = (data*)malloc(sizeof(data));
     coef* dcoef = (coef*)malloc(sizeof(coef));
@@ -448,42 +452,34 @@ extern "C"{
 
     thrust::device_vector<float> dX(X, X+(n[0]*p[0]));
     thrust::device_vector<float> dy(y, y+n[0]);
-    thrust::device_vector<float> dbeta(beta, beta+p[0]);
-    //beta_old is never used
-    //thrust::device_vector<float> dbeta_old(beta, beta+p[0]);
+    thrust::device_vector<float> dbeta(p[0]);
 
     ddata->X = dX.data();
     ddata->y = dy.data();
     dcoef->beta = dbeta.data();
-    //beta_old is never used
-    //dcoef->beta_old = dbeta_old.data();
 
     /* Set coef variables */
 
-    thrust::device_vector<float> dtheta(p[0],0);
-    thrust::device_vector<float> dtheta_old(p[0],0);
-    thrust::device_vector<float> dmomentum(p[0],0);
+    thrust::device_vector<float> dtheta(p[0]);
+    thrust::device_vector<float> dtheta_old(p[0]);
+    thrust::device_vector<float> dmomentum(p[0]);
     dcoef->theta = dtheta.data();
     dcoef->theta_old = dtheta_old.data();
     dcoef->momentum = dmomentum.data();
 
     /* Set optimization variables */
 
-    thrust::device_vector<float> deta(n[0],0);
-    thrust::device_vector<float> dyhat(n[0],0);
-    thrust::device_vector<float> dresiduals(n[0],0);
-    thrust::device_vector<float> dgrad(p[0],0);
-    thrust::device_vector<float> dU(p[0],0);
-    //beta_old and diff_beta are never used
-    //thrust::device_vector<float> ddiff_beta(p[0],0);
-    thrust::device_vector<float> ddiff(p[0],0);
+    thrust::device_vector<float> deta(n[0]);
+    thrust::device_vector<float> dyhat(n[0]);
+    thrust::device_vector<float> dresiduals(n[0]);
+    thrust::device_vector<float> dgrad(p[0]);
+    thrust::device_vector<float> dU(p[0]);
+    thrust::device_vector<float> ddiff(p[0]);
     dopt->eta = deta.data();
     dopt->yhat = dyhat.data();
     dopt->residuals = dresiduals.data();
     dopt->grad = dgrad.data();
     dopt->U = dU.data();
-    //beta_old and diff_beta are never used
-    //dopt->diff_beta = ddiff_beta.data();
     dopt->diff = ddiff.data();
 
     //allocate pointers
@@ -504,9 +500,14 @@ extern "C"{
                       dopt->residuals,
                       thrust::minus<float>());
     pathSol(ddata, dcoef, dopt, dmisc, beta, stat, handle);
-    //shutdown*/
+    //shutdown
     shutdown(ddata, dcoef, dopt, dmisc);
     cublasDestroy(handle);
+
+    if (DEBUG) {
+      time = clock() - time;
+      printf ("It took me %d clicks (%f seconds).\n",(int)time,((float)time)/CLOCKS_PER_SEC);
+    }
   }
 
 }
