@@ -3,20 +3,22 @@
 #' Entry point to CUDA implementation of lasso
 #' @param X design matrix X
 #' @param y response vector y
-#' @param B initial value for beta matrix for varying lambda penalty
 #' @param lambda l1 penalties
+#' @param B initial value for beta matrix for varying lambda penalty
 #' @param standardize.x logical.  If true standardize the design matrix
-#' @param step_size step size for gradient descent
-#' @param threshold convergence threshold
 #' @param maxit maximum iterations
+#' @param threshold convergence threshold
+#' @param gamma learning rate
+#' @param step_size step size for gradient descent
+#' @param reset
 #' @useDynLib cudaglmnet
 #' @export
 cudaglmnet <- function(X, y, lambda,
-                          family = "gaussian",
-                          B = matrix(0, ncol(X), length(lambda)),
-                          standardize.x = T,
-                          maxIt = 5, 
-                          threshold = 1e-6, gamma = 0.9, step_size = 10, reset = 30) {
+                       family = "gaussian",
+                       B = matrix(0, ncol(X), length(lambda)),
+                       standardize.x = T,
+                       maxIt = 100, 
+                       threshold = 1e-6, gamma = 0.5, step_size = 5, reset = 30) {
   
   n <- nrow(X)
   p <- ncol(X)
