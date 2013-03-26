@@ -20,6 +20,7 @@
 #include <thrust/inner_product.h>
 
 #define DEBUG 0
+#define TIME 1
 
 typedef struct {
     int n,p,num_lambda;
@@ -440,7 +441,8 @@ extern "C"{
                      float* t, int* reset)
   { 
     //setup timers
-    clock_t time = clock();
+    clock_t starttime = clock();
+    clock_t endtime;
 
     //setup pointers
     data* ddata = (data*)malloc(sizeof(data));
@@ -457,6 +459,12 @@ extern "C"{
     ddata->X = dX.data();
     ddata->y = dy.data();
     dcoef->beta = dbeta.data();
+
+    if (TIME) {
+      endtime = clock() - starttime;
+      printf ("device memcpy took %d clicks (%f seconds).\n",
+              (int)endtime,((float)endtime)/CLOCKS_PER_SEC);
+    }
 
     /* Set coef variables */
 
@@ -504,22 +512,23 @@ extern "C"{
     shutdown(ddata, dcoef, dopt, dmisc);
     cublasDestroy(handle);
 
-    if (DEBUG) {
-      time = clock() - time;
-      printf ("It took me %d clicks (%f seconds).\n",(int)time,((float)time)/CLOCKS_PER_SEC);
+    if (TIME) {
+      endtime = clock() - starttime;
+      printf ("cudaglmnet took %d clicks (%f seconds).\n",
+              (int)endtime,((float)endtime)/CLOCKS_PER_SEC);
     }
   }
 
 }
 
 int main() {
-  int* n = (int*)malloc(sizeof(int)); n[0] = 100;
+  int* n = (int*)malloc(sizeof(int)); n[0] = 1000;
   int* p = (int*)malloc(sizeof(int)); p[0] = 10;
   int* num_lambda = (int*)malloc(sizeof(int)); num_lambda[0] = 2;
  
-  thrust::host_vector<float> X(n[0]*p[0],1);
-  thrust::host_vector<float> y(n[0],1);
-  thrust::host_vector<float> beta(p[0] * num_lambda[0],1);
+  thrust::host_vector<float> X(n[0]*p[0]);
+  thrust::host_vector<float> y(n[0]);
+  thrust::host_vector<float> beta(p[0] * num_lambda[0]);
   thrust::sequence(X.begin(), X.end());
   thrust::sequence(y.begin(), y.end());
   
@@ -537,7 +546,7 @@ int main() {
                 type, thrust::raw_pointer_cast(&beta[0]), maxIt, thresh, gamma,
                 t, reset);
   int i = 0;
-  for(i = 0; i < beta.size(); i++) printf("beta[%i]: %f\n", i, beta[i]); 
+  if (DEBUG) for(i = 0; i < beta.size(); i++) printf("beta[%i]: %f\n", i, beta[i]);
   free(n); free(p); free(num_lambda);
   free(type); free(maxIt); free(reset);
   free(lambda); free(thresh); free(gamma); free(t);
