@@ -1,9 +1,13 @@
 require(cudaglmnet)
 require(glmnet)
 
-n = 100; p = 10
+n = 1000; p = 10; lambda=1
 X = matrix(rnorm(n*p),n,p); B.true = rnorm(p)
-y = X %*% B.true + rnorm(n)
+y = X %*% B.true + rnorm(n,0,10)
 
-system.time(coef(cudaglmnet(X,y,lambda=100, maxIt = 500, standardize.x=F)))
-system.time(coef(glmnet(X,y,lambda=1)))
+system.time(cudacoefs <- coef(cudaglmnet(X,y,lambda=lambda, maxIt = 1500, standardize.x=T)))
+system.time(glmnetcoefs <- coef(glmnet(X,y,lambda=lambda)))
+
+cudacoefs
+glmnetcoefs
+

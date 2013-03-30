@@ -37,7 +37,7 @@ cudaglmnet <- function(X, y, lambda,
 
   fit <- .C("activePathSol",
             X = as.single(X), y = as.single(y), n = as.integer(n), p = as.integer(p),
-            lambda = as.single(lambda), num_lambda = as.integer(length(lambda)),
+            lambda = as.single(lambda*n), num_lambda = as.integer(length(lambda)),
             type = as.integer(type), beta = as.single(B), maxIt = as.integer(maxIt),
             thresh = as.single(threshold), gamma = as.single(gamma), t = as.single(step_size),
             reset = as.integer(reset),
