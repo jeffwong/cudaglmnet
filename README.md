@@ -1,44 +1,31 @@
-cuLasso
+cudaglmnet
 =======
 
-This package requires [NVIDIA's nvcc](https://developer.nvidia.com/cuda-downloads) > 4.0 to run.
-A GPU with [CUDA Compute Capability](https://developer.nvidia.com/cuda-gpus) >= 1.3 is also required.
+glmnet is a machine learning library in R that estimates generalized linear models with L1 and L2 regularizations.
+CUDA is a NVIDIA programming language allowing developers to make use of GPUs for general purpose programming.
+GPUs have hundreds of cores, allowing them to run the complex mathematical algorithms needed for video processing in
+animation, movies, games, etc.  This R library does the computations for glmnet on the GPU, allowing massive parallel
+computations.
 
-##Compiling
+This package requires [NVIDIA's nvcc](https://developer.nvidia.com/cuda-downloads) > 4.0 to run
 
-Use [autoconf](http://www.gnu.org/software/autoconf/) by changing into the root directory of this package and
-issuing `autoconf` to compile configure.ac into the configure script, and to also autogenerate the Makefile.
-
-`main.cu` has its own entry point which can be executed without R.  This is extremely helpful for debugging.
-It is not necessary to run this in order to install the R package
-
-```
-cd src
-make exec
-```
-
-##Installation
-
-If CUDA > 4.0 is installed, then this package can be installed as a normal source package.
-
-First, compile the package as above.  Then inside the R console issue
+#Compiling and Installing
 
 ```
-install.packages("path to source package", repos = NULL, type = "source")
+./configure
+R CMD INSTALL ./
 ```
 
-##Debugging
-
-The entry point in `main.cu` should be used for debugging.  This allows you to use cuda-gdb and cuda-memcheck.
-
+#Example
 ```
-cd src/
-make exec
-cuda-gdb main
-```
+require(cudaglmnet)
 
-```
-cd src
-make exec
-cuda-memcheck main
+n = 1000; p = 10; lambda=1
+X = matrix(rnorm(n*p),n,p); B.true = rnorm(p)
+y = X %*% B.true + rnorm(n,0,10)
+
+system.time(cudacoefs <- coef(cudaglmnet(X,y,lambda=lambda, maxIt = 1500, standardize.x=T)))
+
+cudacoefs
+
 ```
