@@ -17,7 +17,7 @@
 #include <thrust/generate.h>
 #include <thrust/inner_product.h>
 
-#define DEBUG 1
+#define DEBUG 0 
 #define TIME 1
 
 typedef struct {
@@ -157,7 +157,6 @@ void device_ptrCopy(thrust::device_ptr<float>,
     {
       float nll = calcNegLL(ddata, dcoef, dopt, dmisc, dcoef->beta, j, stat, handle);
       dopt->nLL = nll;
-      if (DEBUG) printf("calcNegLL nll %f\n", dopt->nLL);
       computeFit(ddata, dcoef, dopt, dmisc, stat, handle);
       do
       {
@@ -190,11 +189,15 @@ void device_ptrCopy(thrust::device_ptr<float>,
       }
       default:  //default to normal
       { 
-        return 0.5 * device_ptr2Norm(dopt->residuals, ddata->n);
+        return 0.5 * device_ptr2Norm(dopt->residuals_p, ddata->n);
       }
     }
   }
 
+  /*
+    yhat is already computed as eta in the previous calcNegLL call
+    residuals are computed as residuals_p in the previous calcNegLL call
+  */
   void computeFit(data* ddata, coef* dcoef, opt* dopt, misc* dmisc,
                   cublasStatus_t stat, cublasHandle_t handle)
   {
@@ -203,17 +206,9 @@ void device_ptrCopy(thrust::device_ptr<float>,
     {
       case 0:  //normal
       {
-        //yhat = XB
-        device_ptrSgemv(ddata->X, dcoef->beta, dopt->yhat, ddata->n, ddata->p, stat, handle);
-        //residuals = y - yhat
-        thrust::transform(ddata->y, ddata->y + ddata->n,
-                          dopt->yhat,
-                          dopt->residuals,
-                          thrust::minus<float>());
-        cudaThreadSynchronize();
         //grad = X^T residuals
-        device_ptrCrossProd(ddata->X, dopt->residuals, dopt->grad, ddata->n,
-                            ddata->p, stat, handle);
+        device_ptrCrossProd(ddata->X, dopt->residuals_p, dopt->grad,
+                            ddata->n, ddata->p, stat, handle);
         break;
       }
       default:
@@ -256,7 +251,6 @@ void device_ptrCopy(thrust::device_ptr<float>,
       case 0:  //normal
       {
         device_ptrSoftThreshold(dopt->U, dcoef->theta, ddata->lambda[j] * dmisc->t, ddata->p);
-        printf("Soft threshold by %f\n", ddata->lambda[j] * dmisc->t);
         break;
       }
       default:
@@ -285,7 +279,7 @@ void device_ptrCopy(thrust::device_ptr<float>,
     float iprod = device_ptrDot(dopt->diff, dopt->grad, ddata->p);
     float sumSquareDiff = device_ptr2Norm(dopt->diff, ddata->p);
 
-    int check = (int)(nLL < (dopt->nLL + iprod + (sumSquareDiff / (2 * dmisc->t))));
+    int check = (int)(nLL <= (dopt->nLL + iprod + (sumSquareDiff / (2 * dmisc->t))));
     if (check == 0) dmisc->t = dmisc->t * dmisc->gamma;
     return check;
   }
@@ -480,11 +474,6 @@ extern "C"{
     stat = cublasCreate(&handle);
 
     //solve
-    device_ptrSgemv(ddata->X, dcoef->beta, dopt->yhat, ddata->n, ddata->p, stat, handle);
-    thrust::transform(ddata->y, ddata->y + ddata->n,
-                      dopt->yhat,
-                      dopt->residuals,
-                      thrust::minus<float>());
     pathSol(ddata, dcoef, dopt, dmisc, beta, stat, handle);
     //shutdown
     shutdown(ddata, dcoef, dopt, dmisc);
